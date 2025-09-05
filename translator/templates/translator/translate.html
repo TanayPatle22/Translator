@@ -1,0 +1,91 @@
+{% extends 'translator/base.html' %}
+
+{% block content %}
+{% load widget_tweaks %}
+<div class="row justify-content m-5">
+    <div class="col-md-5 mx-5">
+        <div class="shadow p-1 mt-3 p-4 bg-secondary text-white rounded mb-3">
+            <h1><center>Translator</center></h1>
+        </div>
+        <div class="card">
+            <div class="shadow p-3 card-body">
+                <form method="POST" enctype="multipart/form-data" action="{% url 'translate_pdf' %}">
+                    {% csrf_token %}
+                    <div>
+                        <br>
+                        {{ form.source_text }}
+                        <br>
+                    </div>
+                    <div class="mb-3">
+                        <label for="id_source_file" class="form-label">Upload PDF (optional)</label>
+                        {{ form.source_file }}
+                        <small class="form-text text-muted">
+                            Provide text above OR upload a PDF.
+                        </small>
+                    </div>
+                    <div>
+                        <br>
+                        <label>From: </label>
+                        {{ form.source_lang }}
+                        <br>
+                    </div>
+                    <div>
+                        <br>
+                        <label>To: </label>
+                        {{ form.target_lang }}
+                        <br>
+                    </div>
+                    <div class="mb-3">
+                        <label for="id_engine" class="form-label">Translation Engine</label>
+                        {{ form.engine|add_class:"form-select" }}
+                    </div>
+                    <button class="btn btn-secondary" style="float: right;" type = "submit">Translate</button>
+                </form>
+                <!-- Loader -->
+                <div id="loader" class="text-center mt-3" style="display:none;">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p id="loaderMsg" class="mt-2">Starting translation…</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% if translated_text %}
+    <div class="col-md-5 mx-5">
+        <div class="shadow p-1 mt-4 p-4 bg-success text-white rounded mb-3">
+            <h1><center>Translated Text</center></h1>
+        </div>
+
+        <div class="card">
+            <div class="shadow p-3 card-body">
+                <textarea id="translatedText" class="form-control mb-3" rows="15" readonly>{{ translated_text }}</textarea>
+
+                <button class="btn btn-secondary me-2" onclick="copyText()">Copy</button>
+                <a href="{% url 'download_pdf' %}" class="btn btn-success">Download Translated PDF</a>
+
+
+            </div>
+        </div>
+    {% endif %}
+    </div>
+</div>
+<script>
+    function copyText() {
+        const textArea = document.getElementById("translatedText");
+        textArea.select();
+        document.execCommand("copy");
+        alert("Copied to clipboard!");
+    }
+
+    document.getElementById("translateForm").addEventListener("submit", function() {
+        document.getElementById("loader").style.display = "block";
+
+        let msg = document.getElementById("loaderMsg");
+        msg.textContent = "Extracting text blocks…";
+
+        // simulate steps
+        setTimeout(() => { msg.textContent = "Translating with Gemini…"; }, 1500);
+        setTimeout(() => { msg.textContent = "Rebuilding PDF…"; }, 3000);
+    });
+</script>
+{% endblock content %}
+             
