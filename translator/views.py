@@ -38,26 +38,7 @@ from django.conf import settings
 FONTS = settings.FONTS
 FONT_PATH = settings.FONT_PATH
 
-# FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts")
 
-# FONTS = {
-#     "default": ("NotoSans", "NotoSans.ttf"),   # universal fallback
-#     "hi": ("NotoSansDevanagari", "NotoSansDevanagari.ttf"),
-#     "bn": ("NotoSansBengali", "NotoSansBengali.ttf"),
-#     "ta": ("NotoSansTamil", "NotoSansTamil.ttf"),
-#     "te": ("NotoSansTelugu", "NotoSansTelugu.ttf"),
-#     "gu": ("NotoSansGujarati", "NotoSansGujarati.ttf"),
-#     "mr": ("NotoSansDevanagari", "NotoSansDevanagari.ttf"),
-#     "pa": ("NotoSansGurmukhi", "NotoSansGurmukhi.ttf"),
-#     "zh": ("NotoSansSC", "NotoSansSC.ttf"),   # Simplified Chinese
-#     "ja": ("NotoSansJP", "NotoSansJP.ttf"),
-#     "ko": ("NotoSansKR", "NotoSansKR.ttf"),
-#     "ar": ("NotoNaskhArabic", "NotoNaskhArabic.ttf"),
-#     "ru": ("NotoSans", "NotoSans.ttf"),
-#     "fa": ("NotoNaskhArabic", "NotoNaskhArabic.ttf"),
-#     "ur": ("NotoNaskhArabic", "NotoNaskhArabic.ttf"),
-#     # Add more scripts if needed
-# }
 
 for lang, (font_name, font_file) in FONTS.items():
     try:
