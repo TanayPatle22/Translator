@@ -9,7 +9,7 @@
         </div>
         <div class="card">
             <div class="shadow p-3 card-body">
-                <form method="POST" enctype="multipart/form-data" action="{% url 'translate_pdf' %}">
+                <form id="translateForm" method="POST" enctype="multipart/form-data" action="{% url 'translate' %}">
                     {% csrf_token %}
                     <div>
                         <br>
@@ -39,7 +39,7 @@
                         <label for="id_engine" class="form-label">Translation Engine</label>
                         {{ form.engine|add_class:"form-select" }}
                     </div>
-                    <button class="btn btn-secondary" style="float: right;" type = "submit">Translate</button>
+                    <button type="submit" class="btn btn-primary">Translate</button>
                 </form>
                 <!-- Loader -->
                 <div id="loader" class="text-center mt-3" style="display:none;">

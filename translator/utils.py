@@ -8,6 +8,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from django.conf import settings
 
 FONTS = settings.FONTS
@@ -175,10 +176,13 @@ def translate_blocks(blocks, source_lang, target_lang, engine="google"):
 
     return translated_blocks
 
-def rebuild_pdf(translated_pages, target_lang="default"):
+def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
     """
     Create a PDF with translated text + images + tables, keeping block positions & order.
     """
+
+    doc = fitz.open(original_pdf_path)
+
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -198,47 +202,122 @@ def rebuild_pdf(translated_pages, target_lang="default"):
         pdfmetrics.registerFont(TTFont(default_font, os.path.join(FONT_PATH, default_file)))
         font_name = default_font
 
-    c.setFont(font_name, 12)
+    font_size = 12
+    c.setFont(font_name, font_size)
 
-    for page in translated_pages:
-        for block in page["blocks"]:
-            btype = block["type"]
+    def bbox_equal(a, b, tol=1.0):
+        """Compare two bboxes with small tolerance (points)."""
+        if not a or not b:
+            return False
+        a_t = tuple(float(x) for x in a)
+        b_t = tuple(float(x) for x in b)
+        return all(abs(a_t[i] - b_t[i]) <= tol for i in range(4))
+    
+    for page_index, page in enumerate(doc):
+        blocks = page.get_text("rawdict")["blocks"]
+        translated_blocks = translated_pages[page_index]["blocks"]
 
-            if btype == "text":
+        # for block in blocks:
+        for i, block in enumerate(blocks):
+            translated_text = None
+            tb = translated_blocks[i] if i < len(translated_blocks) else {}
+
+            # CHANGE: try index-based match first, then bbox-based match
+            if tb.get("type") == "text":
+                translated_text = tb.get("text", "").strip()
+            if not translated_text:
+                for tb2 in translated_blocks:
+                    if tb2.get("type") == "text" and bbox_equal(tb2.get("bbox"), block.get("bbox")):
+                        translated_text = tb2.get("text", "").strip()
+                        break
+
+            # CHANGE: improved text drawing with line spacing and better y-coordinates
+            if "lines" in block and translated_text:
                 x0, y0, x1, y1 = block["bbox"]
                 w, h = (x1 - x0), (y1 - y0)
-                y = height - y1  # flip coords
+                y_top = height - y1  # convert coords
 
-                text = block.get("text", "")
-                if text:
-                    text_obj = c.beginText(x0, y + h - 12)  # start from top of box
-                    text_obj.setFont(font_name, 12)
+                text_obj = c.beginText(x0, y_top + h - font_size)
+                text_obj.setFont(font_name, font_size)
+                text_obj.setLeading(font_size + 2)  # line spacing
 
-                from reportlab.pdfbase.pdfmetrics import stringWidth
-                max_width = w
-                for line in text.split("\n"):
+                max_width = w  # block width
+                for line in translated_text.split("\n"):
                     words = line.split(" ")
                     current_line = ""
                     for word in words:
                         trial_line = (current_line + " " + word).strip()
-                        if stringWidth(trial_line, font_name, 12) <= max_width:
+                        if stringWidth(trial_line, font_name, font_size) <= max_width:
                             current_line = trial_line
                         else:
                             text_obj.textLine(current_line)
                             current_line = word
                     if current_line:
                         text_obj.textLine(current_line)
-
                 c.drawText(text_obj)
 
-            elif btype == "image":
-                # Assuming block["image"] holds raw image bytes (from extract)
-                if "image" in block:
+            elif "image" in block:
+                image_list = page.get_images(full=True)
+                for img_index, img in enumerate(image_list):
+                    xref = img[0]
+                    base_image = doc.extract_image(xref)
+                    img_bytes = base_image["image"]
+
                     x0, y0, x1, y1 = block["bbox"]
                     w, h = (x1 - x0), (y1 - y0)
+                    c.drawImage(io.BytesIO(img_bytes), x0, height - y1, width=w, height=h,
+                                preserveAspectRatio=True, mask="auto")
+                    break
+
+
+            elif tb.get("type") == "table":
+                rows = tb.get("rows", [])
+                if rows:
+                    x0, y0, x1, y1 = block["bbox"]
                     y = height - y1
-                    img_data = io.BytesIO(block["image"])
-                    c.drawImage(img_data, x0, y, width=w, height=h, preserveAspectRatio=True, mask="auto")
+                    for ridx, row in enumerate(rows):
+                        line = " | ".join(row)
+                        c.drawString(x0, y - (ridx * (font_size + 2)), line)
+
+    # for page in translated_pages:
+    #     for block in page["blocks"]:
+    #         btype = block["type"]
+
+    #         if btype == "text":
+    #             x0, y0, x1, y1 = block["bbox"]
+    #             w, h = (x1 - x0), (y1 - y0)
+    #             y = height - y1  # flip coords
+
+    #             text = block.get("text", "")
+    #             if text:
+    #                 text_obj = c.beginText(x0, y + h - 12)  # start from top of box
+    #                 text_obj.setFont(font_name, 12)
+
+    #             from reportlab.pdfbase.pdfmetrics import stringWidth
+    #             max_width = w
+    #             for line in text.split("\n"):
+    #                 words = line.split(" ")
+    #                 current_line = ""
+    #                 for word in words:
+    #                     trial_line = (current_line + " " + word).strip()
+    #                     if stringWidth(trial_line, font_name, 12) <= max_width:
+    #                         current_line = trial_line
+    #                     else:
+    #                         text_obj.textLine(current_line)
+    #                         current_line = word
+    #                 if current_line:
+    #                     text_obj.textLine(current_line)
+
+    #             c.drawText(text_obj)
+
+    #         elif btype == "image":
+    #             # Assuming block["image"] holds raw image bytes (from extract)
+    #             if "image" in block:
+    #                 x0, y0, x1, y1 = block["bbox"]
+    #                 w, h = (x1 - x0), (y1 - y0)
+    #                 y = height - y1
+    #                 img_data = io.BytesIO(block["image"])
+    #                 c.drawImage(img_data, x0, y, width=w, height=h, preserveAspectRatio=True, mask="auto")
 
 
             # elif btype == "table":
@@ -253,7 +332,7 @@ def rebuild_pdf(translated_pages, target_lang="default"):
             #             c.drawString(x0, y - (ridx * 14), line)
 
 
-            elif btype == "other":
+            else:
                 # For now just preserve bounding box placeholder (optional)
                 x0, y0, x1, y1 = block["bbox"]
                 y = height - y1
