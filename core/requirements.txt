@@ -1,53 +1,106 @@
-annotated-types>=0.7.0
-anyio>=4.0
-asgiref>=3.9
-beautifulsoup4>=4.13
-cachetools>=5.0
-certifi>=2025.8.3
-chardet>=3.0
-charset-normalizer>=3.3
-deep-translator>=1.11
-Django>=5.2,<6.0
-django-widget-tweaks>=1.5
-google>=3.0
-google-ai-generativelanguage>=0.6
-google-api-core>=2.25
-google-api-python-client>=2.179
-google-auth>=2.40
-google-auth-httplib2>=0.2
-google-generativeai>=0.8
-googleapis-common-protos>=1.70
-# Removed googletrans to avoid httpx conflict
-grpcio>=1.74
-grpcio-status>=1.71
-h11>=0.16
-h2>=3.2
-hpack>=3.0
-hstspreload>=2025.1
-httpcore>=1.0
-httplib2>=0.30
-httpx>=0.28
-hyperframe>=5.2
-idna>=3.7
-pillow>=11.0
-proto-plus>=1.26
-protobuf>=5.29
-pyasn1>=0.6
-pyasn1_modules>=0.4
-pydantic>=2.11
-pydantic_core>=2.33
-PyMuPDF>=1.26
-pyparsing>=3.2
-PyPDF2>=3.0
-reportlab>=4.4
-requests>=2.32
-rfc3986>=1.5
-rsa>=4.9
-sniffio>=1.3
-soupsieve>=2.7
-sqlparse>=0.5
-tqdm>=4.67
-typing-inspection>=0.4
-typing_extensions>=4.15
-uritemplate>=4.2
-urllib3>=2.5
+annotated-types
+anyio
+asgiref
+beautifulsoup4
+cachetools
+certifi
+chardet
+charset-normalizer
+deep-translator
+Django
+django-widget-tweaks
+google
+google-ai-generativelanguage
+google-api-core
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-generativeai
+googleapis-common-protos
+grpcio
+grpcio-status
+h11
+h2
+hpack
+hstspreload
+httpcore
+httplib2
+hyperframe
+idna
+pillow
+proto-plus
+protobuf
+pyasn1
+pyasn1_modules
+pydantic
+pydantic_core
+PyMuPDF
+pyparsing
+PyPDF2
+reportlab
+requests
+rfc3986
+rsa
+sniffio
+soupsieve
+sqlparse
+tqdm
+typing-inspection
+typing_extensions
+uritemplate
+urllib3
+httpx
+
+# annotated-types>=0.7.0
+# anyio>=4.0
+# asgiref>=3.9
+# beautifulsoup4>=4.13
+# cachetools>=5.0
+# certifi>=2025.8.3
+# chardet>=3.0
+# charset-normalizer>=3.3
+# deep-translator>=1.11
+# Django>=5.2,<6.0
+# django-widget-tweaks>=1.5
+# google>=3.0
+# google-ai-generativelanguage>=0.6
+# google-api-core>=2.25
+# google-api-python-client>=2.179
+# google-auth>=2.40
+# google-auth-httplib2>=0.2
+# google-generativeai>=0.8
+# googleapis-common-protos>=1.70
+# grpcio>=1.74
+# grpcio-status>=1.71
+# h11>=0.16
+# h2>=3.2
+# hpack>=3.0
+# hstspreload>=2025.1
+# httpcore>=1.0
+# httplib2>=0.30
+# hyperframe>=5.2
+# idna>=3.7
+# pillow>=11.0
+# proto-plus>=1.26
+# protobuf>=5.29
+# pyasn1>=0.6
+# pyasn1_modules>=0.4
+# pydantic>=2.11
+# pydantic_core>=2.33
+# PyMuPDF>=1.26
+# pyparsing>=3.2
+# PyPDF2>=3.0
+# reportlab>=4.4
+# requests>=2.32
+# rfc3986>=1.5
+# rsa>=4.9
+# sniffio>=1.3
+# soupsieve>=2.7
+# sqlparse>=0.5
+# tqdm>=4.67
+# typing-inspection>=0.4
+# typing_extensions>=4.15
+# uritemplate>=4.2
+# urllib3>=2.5
+# httpx
+# googletrans

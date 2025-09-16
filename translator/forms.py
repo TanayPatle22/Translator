@@ -10,7 +10,7 @@ ENGINE_CHOICES = [
 
 class TranslationForm(forms.Form):
     source_text = forms.CharField(required=False, widget=forms.Textarea(attrs={'rows': 4, 'cols': 40, 'style': 'overflow-y: auto;', 'placeholder' : 'Enter source text'}))
-    source_lang = forms.ChoiceField(label = 'Source language', choices=LANGUAGE_SLUGS.items)
+    source_lang = forms.ChoiceField(label = 'Source language', choices=LANGUAGE_SLUGS.items,)
     target_lang = forms.ChoiceField(label = 'Target language', choices=LANGUAGE_SLUGS.items)
     source_file = forms.FileField(required=False, label='Upload PDF file')
     engine = forms.ChoiceField(choices=ENGINE_CHOICES, required=True, initial="gemini")

@@ -11,6 +11,9 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from django.conf import settings
 
+import logging
+logger = logging.getLogger(__name__)
+
 FONTS = settings.FONTS
 FONT_PATH = settings.FONT_PATH
 
@@ -65,6 +68,7 @@ LANGUAGE_SLUGS = {
     'mk': 'Macedonian',
     'is': 'Icelandic',
     'ga': 'Irish',
+    'kk': "Kazakh",
 }
 
 
@@ -117,12 +121,27 @@ def gemini_translate_text(text: str, source_lang: str, target_lang: str) -> str:
     """
     Translate text using Gemini model.
     """
-    prompt = f"Translate the following text from {source_lang} to {target_lang}, IMPORTANT INSTRUCTIONS:- Output ONLY the translated text.- Do NOT include explanations, notes, romanizations, or comments.- Do NOT add headers like translation. - Keep the same formatting, line breaks, and numbering as the input. - If the text cannot be translated (e.g., proper nouns), leave it unchanged.:\n{text}"
 
+    logger.debug("Initializing Gemini model…")
     model = genai.GenerativeModel("gemini-1.5-flash")  # you can use gemini-pro / gemini-1.5-pro too
-    response = model.generate_content(prompt)
+    prompt = f"Translate the following text from {source_lang} to {target_lang}, IMPORTANT INSTRUCTIONS:- Output ONLY the translated text.- Do NOT include explanations, notes, romanizations, or comments.- Do NOT add headers like translation. - Keep the same formatting, line breaks, and numbering as the input. - If the text cannot be translated (e.g., proper nouns), leave it unchanged.:\n{text}"
+    logger.debug(f"Prompt prepared (len={len(prompt)}): {prompt[:100]}...")
+    
+    try:
+        response = model.generate_content(prompt, request_options={"timeout": 60})
+        logger.debug(f"Raw Gemini response: {response}")
 
-    return response.text.strip() if response.text else ""
+        # Try safest extraction
+        if hasattr(response, "text") and response.text:
+            return response.text.strip()
+        elif hasattr(response, "candidates") and response.candidates:
+            return response.candidates[0].content.parts[0].text.strip()
+        else:
+            logger.warning(f"Unexpected Gemini response format: {response}")
+            return ""
+    except Exception as e:
+        logger.error(f"Gemini API call failed: {e}", exc_info=True)
+        return ""
 
 def gemini_translate_chunks(chunks: List[str], source_lang: str, target_lang: str) -> str:
     """

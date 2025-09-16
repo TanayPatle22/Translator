@@ -40,7 +40,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'translator',
-    'widget_tweaks'
+    'widget_tweaks',
 ]
 
 MIDDLEWARE = [
@@ -175,6 +175,7 @@ FONTS = {
     "ko": ("NotoSansKR", "NotoSansKR.ttf"),
     "ar": ("NotoNaskhArabic", "NotoNaskhArabic.ttf"),
     "ru": ("NotoSans", "NotoSans.ttf"),
+    "kk": ("NotoSans", "NotoSans.ttf"),
     "fa": ("NotoNaskhArabic", "NotoNaskhArabic.ttf"),
     "ur": ("NotoNaskhArabic", "NotoNaskhArabic.ttf"),
     # Add more scripts if needed
