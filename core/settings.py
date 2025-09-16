@@ -136,7 +136,7 @@ os.environ["GRPC_DNS_RESOLVER"] = "native"
 os.environ["GRPC_VERBOSITY"] = "debug"
 
 # Load Gemini API key from env
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("⚠️ Gemini API key not found. Set GEMINI_API_KEY in your environment.")
 
