@@ -125,7 +125,7 @@ def gemini_translate_text(text: str, source_lang: str, target_lang: str) -> str:
     """
 
     logger.debug("Initializing Gemini model…")
-    model = genai.GenerativeModel("gemini-1.5-flash")  # you can use gemini-pro / gemini-1.5-pro too
+    model = genai.GenerativeModel("gemini-2.5-flash-lite")  # you can use gemini-pro / gemini-1.5-pro too
     prompt = f"Translate the following text from {source_lang} to {target_lang}, IMPORTANT INSTRUCTIONS:- Output ONLY the translated text.- Do NOT include explanations, notes, romanizations, or comments.- Do NOT add headers like translation. - Keep the same formatting, line breaks, and numbering as the input. - If the text cannot be translated (e.g., proper nouns), leave it unchanged.:\n{text}"
     logger.debug(f"Prompt prepared (len={len(prompt)}): {prompt[:100]}...")
     
