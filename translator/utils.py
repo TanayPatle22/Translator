@@ -1,9 +1,11 @@
+#utils.py
+
 from typing import List
 from deep_translator import GoogleTranslator
 import google.generativeai as genai
 import fitz  # PyMuPDF
 import io, os
-
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
@@ -153,6 +155,22 @@ def gemini_translate_chunks(chunks: List[str], source_lang: str, target_lang: st
         translated_chunks.append(translated)
     return "\n\n".join(translated_chunks)
 
+def _run_translation(text, source_lang, target_lang, engine):
+    """Helper: translate text with Google/Gemini depending on length."""
+    if engine == "google":
+        if len(text) <= 4000:
+            return GoogleTranslator(source=source_lang, target=target_lang).translate(text)
+        else:
+            chunks = chunk_text(text)
+            return translate_chunks(chunks, source_lang, target_lang)
+    elif engine == "gemini":
+        if len(text) <= 4000:
+            return gemini_translate_text(text, source_lang, target_lang)
+        else:
+            chunks = chunk_text(text)
+            return gemini_translate_chunks(chunks, source_lang, target_lang)
+    return text
+
 def translate_blocks(blocks, source_lang, target_lang, engine="google"):
     """
     Translate only text blocks, keep images/others unchanged.
@@ -190,6 +208,27 @@ def translate_blocks(blocks, source_lang, target_lang, engine="google"):
 
             block["text"] = translated
             translated_blocks.append(block)
+
+        elif block["type"] == "image" and block.get("image_text"):
+            text = block["image_text"]
+            logger.debug(f"[TRANSLATE_BLOCKS] OCR raw: '{text[:80]}'")
+
+            translated = _run_translation(text, source_lang, target_lang, engine)
+            logger.debug(f"[TRANSLATE_BLOCKS] OCR translated: '{translated[:80]}'")
+
+            # keep original image block
+            translated_blocks.append(block)
+
+            # insert a new text block (just below the image)
+            x0, y0, x1, y1 = block["bbox"]
+            caption_block = {
+                "type": "text",
+                "bbox": (x0, y0 - 30, x1, y0 - 10),  # small box below image
+                "text": f'Translated text from image - "{translated}"'
+            }
+            logger.debug(f"[TRANSLATE_BLOCKS] Inserted caption block: {caption_block}")
+            translated_blocks.append(caption_block)
+
         else:
             translated_blocks.append(block)
 
@@ -221,7 +260,7 @@ def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
         pdfmetrics.registerFont(TTFont(default_font, os.path.join(FONT_PATH, default_file)))
         font_name = default_font
 
-    font_size = 12
+    font_size = 9
     c.setFont(font_name, font_size)
 
     def bbox_equal(a, b, tol=1.0):
@@ -252,6 +291,7 @@ def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
 
             # CHANGE: improved text drawing with line spacing and better y-coordinates
             if "lines" in block and translated_text:
+                
                 x0, y0, x1, y1 = block["bbox"]
                 w, h = (x1 - x0), (y1 - y0)
                 y_top = height - y1  # convert coords
@@ -284,8 +324,21 @@ def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
 
                     x0, y0, x1, y1 = block["bbox"]
                     w, h = (x1 - x0), (y1 - y0)
-                    c.drawImage(io.BytesIO(img_bytes), x0, height - y1, width=w, height=h,
-                                preserveAspectRatio=True, mask="auto")
+
+                    # 👇 Fix here
+                    c.drawImage(ImageReader(io.BytesIO(img_bytes)), x0, height - y1,
+                                width=w, height=h, preserveAspectRatio=True, mask="auto")
+                    
+                    if "ocr_text" in block and block["ocr_text"].strip():
+                        ocr_text = block["ocr_text"]
+                        logger.debug(f"[PDF REBUILD] Drawing OCR text at {block['bbox']} -> '{ocr_text[:80]}'")
+
+                        text_obj = c.beginText(x0, (height - y1) - font_size - 5)
+                        text_obj.setFont(font_name, font_size)
+                        text_obj.setLeading(font_size + 2)
+                        for line in ocr_text.split("\n"):
+                            text_obj.textLine(line)
+                        c.drawText(text_obj)
                     break
 
 
@@ -298,58 +351,6 @@ def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
                         line = " | ".join(row)
                         c.drawString(x0, y - (ridx * (font_size + 2)), line)
 
-    # for page in translated_pages:
-    #     for block in page["blocks"]:
-    #         btype = block["type"]
-
-    #         if btype == "text":
-    #             x0, y0, x1, y1 = block["bbox"]
-    #             w, h = (x1 - x0), (y1 - y0)
-    #             y = height - y1  # flip coords
-
-    #             text = block.get("text", "")
-    #             if text:
-    #                 text_obj = c.beginText(x0, y + h - 12)  # start from top of box
-    #                 text_obj.setFont(font_name, 12)
-
-    #             from reportlab.pdfbase.pdfmetrics import stringWidth
-    #             max_width = w
-    #             for line in text.split("\n"):
-    #                 words = line.split(" ")
-    #                 current_line = ""
-    #                 for word in words:
-    #                     trial_line = (current_line + " " + word).strip()
-    #                     if stringWidth(trial_line, font_name, 12) <= max_width:
-    #                         current_line = trial_line
-    #                     else:
-    #                         text_obj.textLine(current_line)
-    #                         current_line = word
-    #                 if current_line:
-    #                     text_obj.textLine(current_line)
-
-    #             c.drawText(text_obj)
-
-    #         elif btype == "image":
-    #             # Assuming block["image"] holds raw image bytes (from extract)
-    #             if "image" in block:
-    #                 x0, y0, x1, y1 = block["bbox"]
-    #                 w, h = (x1 - x0), (y1 - y0)
-    #                 y = height - y1
-    #                 img_data = io.BytesIO(block["image"])
-    #                 c.drawImage(img_data, x0, y, width=w, height=h, preserveAspectRatio=True, mask="auto")
-
-
-            # elif btype == "table":
-            #     # For now, render table as text (CSV-like). 
-            #     # Later, can use reportlab.platypus Table for full grid rendering.
-            #     rows = block.get("rows", [])
-            #     if rows:
-            #         x0, y0, x1, y1 = block["bbox"]
-            #         y = height - y1
-            #         for ridx, row in enumerate(rows):
-            #             line = " | ".join(row)
-            #             c.drawString(x0, y - (ridx * 14), line)
-
 
             else:
                 # For now just preserve bounding box placeholder (optional)
@@ -358,6 +359,24 @@ def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
                 c.rect(x0, y, (x1 - x0), (y1 - y0), stroke=1, fill=0)  # draw placeholder box
 
         c.showPage()  # next page
+
+        # for tb in translated_blocks:
+        #     if tb.get("type") == "text" and tb.get("text") and tb["bbox"]:
+        #         x0, y0, x1, y1 = tb["bbox"]
+        #         y_top = height - y1
+        #         caption_text = tb["text"]
+
+        #         logger.debug(f"[PDF REBUILD] Drawing extra text at {tb['bbox']} -> '{caption_text[:80]}'")
+
+        #         text_obj = c.beginText(x0, y_top + (y1 - y0) - font_size)
+        #         text_obj.setFont(font_name, font_size)
+        #         text_obj.setLeading(font_size + 2)
+        #         for line in caption_text.split("\n"):
+        #             text_obj.textLine(line)
+        #         c.drawText(text_obj)
+        
+        # logger.debug(f"[PDF REBUILD] Completed Page {page_index+1}, drew {len(translated_blocks)} translated blocks")
+
 
     c.save()
     buffer.seek(0)

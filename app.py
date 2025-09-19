@@ -1,3 +1,4 @@
+# app.py
 import os
 import sys
 import io
@@ -176,7 +177,7 @@ with col1:
                             translated_text = translate_chunks(chunks, source_lang, target_lang)
                     elif engine == "gemini":
                         logger.debug(f"Using Gemini for translation | Source lang={source_lang}, Target lang={target_lang}")
-                        
+
                         try:
                             with st.spinner("Translating with Gemini…"):
                                 if len(source_text) <= 4000:
