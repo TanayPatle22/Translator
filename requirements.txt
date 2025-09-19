@@ -50,3 +50,5 @@ typing_extensions
 uritemplate
 urllib3
 httpx
+pytesseract
+pillow
