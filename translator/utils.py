@@ -1,6 +1,6 @@
 #utils.py
 
-from typing import List
+from typing import List, Optional, Dict, Any
 from deep_translator import GoogleTranslator
 import google.generativeai as genai
 import fitz  # PyMuPDF
@@ -12,6 +12,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from django.conf import settings
+from dataclasses import dataclass
 
 import logging
 logger = logging.getLogger(__name__)
@@ -21,59 +22,70 @@ FONT_PATH = settings.FONT_PATH
 
 
 LANGUAGE_SLUGS = {
-    'en': 'English',
-    'es': 'Spanish',
-    'zh': 'Chinese',
-    'hi': 'Hindi',
-    'ar': 'Arabic',
-    'pt': 'Portuguese',
-    'bn': 'Bengali',
-    'ru': 'Russian',
-    'ur': 'Urdu',
-    'fr': 'French',
-    'id': 'Indonesian',
-    'de': 'German',
-    'ja': 'Japanese',
-    'pa': 'Punjabi',
-    'te': 'Telugu',
-    'mr': 'Marathi',
-    'vi': 'Vietnamese',
-    'ko': 'Korean',
-    'ta': 'Tamil',
-    'it': 'Italian',
-    'tr': 'Turkish',
-    'th': 'Thai',
-    'gu': 'Gujarati',
-    'pl': 'Polish',
-    'uk': 'Ukrainian',
-    'nl': 'Dutch',
-    'fa': 'Persian',
-    'ms': 'Malay',
-    'ja': 'Japanese',
-    'sv': 'Swedish',
-    'he': 'Hebrew',
-    'ro': 'Romanian',
-    'hu': 'Hungarian',
-    'cs': 'Czech',
-    'fi': 'Finnish',
-    'el': 'Greek',
-    'da': 'Danish',
-    'bg': 'Bulgarian',
-    'sk': 'Slovak',
-    'hr': 'Croatian',
-    'sl': 'Slovenian',
-    'no': 'Norwegian',
-    'sq': 'Albanian',
-    'lt': 'Lithuanian',
-    'lv': 'Latvian',
-    'et': 'Estonian',
-    'mk': 'Macedonian',
-    'is': 'Icelandic',
-    'ga': 'Irish',
-    'kk': "Kazakh",
+    'en': 'English', 'es': 'Spanish', 'zh': 'Chinese', 'hi': 'Hindi',
+    'ar': 'Arabic', 'pt': 'Portuguese', 'bn': 'Bengali', 'ru': 'Russian',
+    'ur': 'Urdu', 'fr': 'French', 'id': 'Indonesian', 'de': 'German',
+    'ja': 'Japanese', 'pa': 'Punjabi', 'te': 'Telugu', 'mr': 'Marathi',
+    'vi': 'Vietnamese', 'ko': 'Korean', 'ta': 'Tamil', 'it': 'Italian',
+    'tr': 'Turkish', 'th': 'Thai', 'gu': 'Gujarati', 'pl': 'Polish',
+    'uk': 'Ukrainian', 'nl': 'Dutch', 'fa': 'Persian', 'ms': 'Malay',
+    'sv': 'Swedish', 'he': 'Hebrew', 'ro': 'Romanian', 'hu': 'Hungarian',
+    'cs': 'Czech', 'fi': 'Finnish', 'el': 'Greek', 'da': 'Danish',
+    'bg': 'Bulgarian', 'sk': 'Slovak', 'hr': 'Croatian', 'sl': 'Slovenian',
+    'no': 'Norwegian', 'sq': 'Albanian', 'lt': 'Lithuanian', 'lv': 'Latvian',
+    'et': 'Estonian', 'mk': 'Macedonian', 'is': 'Icelandic', 'ga': 'Irish',
+    'kk': 'Kazakh',
 }
 
+@dataclass
+class TranslationResult:
+    """Simple result class for translation operations."""
+    original_text: str
+    translated_text: str
+    source_lang: str
+    target_lang: str
+    engine: str
+    success: bool
+    error_message: Optional[str] = None
 
+
+class SimpleTranslationManager:
+    """Basic translation manager compatible with your existing code."""
+    
+    def translate_text(self, text: str, source_lang: str, target_lang: str, 
+                      engine: str = "google") -> TranslationResult:
+        """Translate text using specified engine."""
+        
+        if not text or not text.strip():
+            return TranslationResult(text, "", source_lang, target_lang, engine, False, "Empty text")
+        
+        try:
+            if engine == "google":
+                if len(text) <= 4000:
+                    translated = GoogleTranslator(
+                        source=source_lang, target=target_lang
+                    ).translate(text)
+                else:
+                    chunks = chunk_text(text)
+                    translated = translate_chunks(chunks, source_lang, target_lang)
+            
+            elif engine == "gemini":
+                if len(text) <= 4000:
+                    translated = gemini_translate_text(text, source_lang, target_lang)
+                else:
+                    chunks = chunk_text(text)
+                    translated = gemini_translate_chunks(chunks, source_lang, target_lang)
+            else:
+                return TranslationResult(text, text, source_lang, target_lang, engine, False, "Unknown engine")
+            
+            return TranslationResult(text, translated, source_lang, target_lang, engine, True)
+            
+        except Exception as e:
+            logger.error(f"Translation failed: {e}")
+            return TranslationResult(text, text, source_lang, target_lang, engine, False, str(e))
+
+# Create global translation manager instance
+translation_manager = SimpleTranslationManager()
 
 def chunk_text(text: str, max_chars: int = 4000) -> List[str]:
     """
@@ -236,11 +248,9 @@ def translate_blocks(blocks, source_lang, target_lang, engine="google"):
 
 def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
     """
-    Create a PDF with translated text + images + tables, keeping block positions & order.
+    Enhanced PDF rebuilding compatible with new span-based structure.
     """
-
     doc = fitz.open(original_pdf_path)
-
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -249,18 +259,17 @@ def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
     try:
         font_name, font_file = FONTS.get(target_lang, FONTS["default"])
     except:
-        font_name, font_file = FONTS["default"]  # always fallback to NotoSans
+        font_name, font_file = FONTS["default"]
 
     font_path = os.path.join(FONT_PATH, font_file)
     try:
         pdfmetrics.registerFont(TTFont(font_name, font_path))
     except:
-        # fallback → NotoSans only (not Helvetica)
         default_font, default_file = FONTS["default"]
         pdfmetrics.registerFont(TTFont(default_font, os.path.join(FONT_PATH, default_file)))
         font_name = default_font
 
-    font_size = 9
+    font_size = 11
     c.setFont(font_name, font_size)
 
     def bbox_equal(a, b, tol=1.0):
@@ -270,114 +279,151 @@ def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
         a_t = tuple(float(x) for x in a)
         b_t = tuple(float(x) for x in b)
         return all(abs(a_t[i] - b_t[i]) <= tol for i in range(4))
-    
+
     for page_index, page in enumerate(doc):
-        blocks = page.get_text("rawdict")["blocks"]
-        translated_blocks = translated_pages[page_index]["blocks"]
+        if page_index >= len(translated_pages):
+            break
+            
+        original_blocks = page.get_text("rawdict")["blocks"]
+        translated_page = translated_pages[page_index]
+        translated_blocks = translated_page.get("blocks", [])
 
-        # for block in blocks:
-        for i, block in enumerate(blocks):
-            translated_text = None
-            tb = translated_blocks[i] if i < len(translated_blocks) else {}
-
-            # CHANGE: try index-based match first, then bbox-based match
-            if tb.get("type") == "text":
-                translated_text = tb.get("text", "").strip()
-            if not translated_text:
-                for tb2 in translated_blocks:
-                    if tb2.get("type") == "text" and bbox_equal(tb2.get("bbox"), block.get("bbox")):
-                        translated_text = tb2.get("text", "").strip()
-                        break
-
-            # CHANGE: improved text drawing with line spacing and better y-coordinates
-            if "lines" in block and translated_text:
+        for i, original_block in enumerate(original_blocks):
+            try:
+                # Find corresponding translated block
+                translated_block = translated_blocks[i] if i < len(translated_blocks) else {}
                 
-                x0, y0, x1, y1 = block["bbox"]
-                w, h = (x1 - x0), (y1 - y0)
-                y_top = height - y1  # convert coords
-
-                text_obj = c.beginText(x0, y_top + h - font_size)
-                text_obj.setFont(font_name, font_size)
-                text_obj.setLeading(font_size + 2)  # line spacing
-
-                max_width = w  # block width
-                for line in translated_text.split("\n"):
-                    words = line.split(" ")
-                    current_line = ""
-                    for word in words:
-                        trial_line = (current_line + " " + word).strip()
-                        if stringWidth(trial_line, font_name, font_size) <= max_width:
-                            current_line = trial_line
-                        else:
-                            text_obj.textLine(current_line)
-                            current_line = word
-                    if current_line:
-                        text_obj.textLine(current_line)
-                c.drawText(text_obj)
-
-            elif "image" in block:
-                image_list = page.get_images(full=True)
-                for img_index, img in enumerate(image_list):
-                    xref = img[0]
-                    base_image = doc.extract_image(xref)
-                    img_bytes = base_image["image"]
-
-                    x0, y0, x1, y1 = block["bbox"]
-                    w, h = (x1 - x0), (y1 - y0)
-
-                    # 👇 Fix here
-                    c.drawImage(ImageReader(io.BytesIO(img_bytes)), x0, height - y1,
-                                width=w, height=h, preserveAspectRatio=True, mask="auto")
+                if "lines" in original_block:
+                    # Handle text blocks - check for new span-based structure
+                    if "lines" in translated_block and translated_block.get("type") == "text":
+                        # New format with preserved span structure
+                        render_enhanced_text_block(c, translated_block, height, font_name, font_size)
+                    elif translated_block.get("text"):
+                        # Fallback to simple text rendering
+                        render_simple_text_block(c, original_block, translated_block.get("text"), 
+                                                height, font_name, font_size)
+                
+                elif "image" in original_block:
+                    # Handle image blocks
+                    render_image_block(c, page, original_block, translated_block, height, font_name, font_size)
                     
-                    if "ocr_text" in block and block["ocr_text"].strip():
-                        ocr_text = block["ocr_text"]
-                        logger.debug(f"[PDF REBUILD] Drawing OCR text at {block['bbox']} -> '{ocr_text[:80]}'")
+            except Exception as e:
+                logger.error(f"Error rendering block {i} on page {page_index + 1}: {e}")
+                continue
 
-                        text_obj = c.beginText(x0, (height - y1) - font_size - 5)
-                        text_obj.setFont(font_name, font_size)
-                        text_obj.setLeading(font_size + 2)
-                        for line in ocr_text.split("\n"):
-                            text_obj.textLine(line)
-                        c.drawText(text_obj)
-                    break
-
-
-            elif tb.get("type") == "table":
-                rows = tb.get("rows", [])
-                if rows:
-                    x0, y0, x1, y1 = block["bbox"]
-                    y = height - y1
-                    for ridx, row in enumerate(rows):
-                        line = " | ".join(row)
-                        c.drawString(x0, y - (ridx * (font_size + 2)), line)
-
-
-            else:
-                # For now just preserve bounding box placeholder (optional)
-                x0, y0, x1, y1 = block["bbox"]
-                y = height - y1
-                c.rect(x0, y, (x1 - x0), (y1 - y0), stroke=1, fill=0)  # draw placeholder box
-
-        c.showPage()  # next page
-
-        # for tb in translated_blocks:
-        #     if tb.get("type") == "text" and tb.get("text") and tb["bbox"]:
-        #         x0, y0, x1, y1 = tb["bbox"]
-        #         y_top = height - y1
-        #         caption_text = tb["text"]
-
-        #         logger.debug(f"[PDF REBUILD] Drawing extra text at {tb['bbox']} -> '{caption_text[:80]}'")
-
-        #         text_obj = c.beginText(x0, y_top + (y1 - y0) - font_size)
-        #         text_obj.setFont(font_name, font_size)
-        #         text_obj.setLeading(font_size + 2)
-        #         for line in caption_text.split("\n"):
-        #             text_obj.textLine(line)
-        #         c.drawText(text_obj)
-        
-        # logger.debug(f"[PDF REBUILD] Completed Page {page_index+1}, drew {len(translated_blocks)} translated blocks")
-
+        c.showPage()
 
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def render_enhanced_text_block(c, translated_block, height, font_name, font_size):
+    """Render text block with preserved span structure."""
+    try:
+        for line in translated_block.get("lines", []):
+            for span in line.get("spans", []):
+                text = span.get("text", "").strip()
+                if not text:
+                    continue
+                
+                # Get span position
+                origin = span.get("origin", [0, 0])
+                x, y = origin[0], height - origin[1]
+                
+                # Set font size from span if available
+                span_font = span.get("font", font_name)
+                span_size = span.get("size", font_size)
+                try:
+                    c.setFont(span_font, span_size)
+                except:
+                    c.setFont(font_name, font_size)
+                
+                # Draw text at original position
+                c.drawString(x, y, text)
+                
+    except Exception as e:
+        logger.error(f"Enhanced text block rendering failed: {e}")
+
+def render_simple_text_block(c, original_block, translated_text, height, font_name, font_size):
+    """Fallback simple text block rendering."""
+    try:
+        x0, y0, x1, y1 = original_block["bbox"]
+        w, h = (x1 - x0), (y1 - y0)
+        y_top = height - y1
+
+        text_obj = c.beginText(x0, y_top + h - font_size)
+        text_obj.setFont(font_name, font_size)
+        text_obj.setLeading(font_size + 2)
+
+        max_width = w
+        for line in translated_text.split("\n"):
+            words = line.split(" ")
+            current_line = ""
+            for word in words:
+                trial_line = (current_line + " " + word).strip()
+                if stringWidth(trial_line, font_name, font_size) <= max_width:
+                    current_line = trial_line
+                else:
+                    if current_line:
+                        text_obj.textLine(current_line)
+                    current_line = word
+            if current_line:
+                text_obj.textLine(current_line)
+        
+        c.drawText(text_obj)
+        
+    except Exception as e:
+        logger.error(f"Simple text block rendering failed: {e}")
+
+def render_image_block(c, page, original_block, translated_block, height, font_name, font_size):
+    """Render image blocks with OCR text if available."""
+    try:
+        # Draw the image
+        image_list = page.get_images(full=True)
+        for img_index, img in enumerate(image_list):
+            xref = img[0]
+            base_image = page.parent.extract_image(xref)
+            img_bytes = base_image["image"]
+
+            x0, y0, x1, y1 = original_block["bbox"]
+            w, h = (x1 - x0), (y1 - y0)
+
+            c.drawImage(ImageReader(io.BytesIO(img_bytes)), x0, height - y1,
+                       width=w, height=h, preserveAspectRatio=True, mask="auto")
+            
+            # Add translated OCR text if available
+            ocr_text = translated_block.get("image_text") or translated_block.get("translated_ocr")
+            if ocr_text and ocr_text.strip():
+                # Draw OCR text below image
+                text_y = height - y1 - font_size - 5
+                c.setFont(font_name, font_size - 1)  # Slightly smaller for OCR text
+                
+                # Simple word wrapping for OCR text
+                words = ocr_text.split()
+                current_line = ""
+                max_width = w
+                
+                for word in words:
+                    trial_line = (current_line + " " + word).strip()
+                    if stringWidth(trial_line, font_name, font_size - 1) <= max_width:
+                        current_line = trial_line
+                    else:
+                        if current_line:
+                            c.drawString(x0, text_y, current_line)
+                            text_y -= (font_size - 1) + 2
+                        current_line = word
+                
+                if current_line:
+                    c.drawString(x0, text_y, current_line)
+            
+            break
+            
+    except Exception as e:
+        logger.error(f"Image block rendering failed: {e}")
+
+# For backward compatibility - keep your existing function signatures
+def translate_text_simple(text: str, source_lang: str, target_lang: str, engine: str = "google") -> str:
+    """Simple text translation function for backward compatibility."""
+    result = translation_manager.translate_text(text, source_lang, target_lang, engine)
+    return result.translated_text if result.success else text

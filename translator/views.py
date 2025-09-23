@@ -1,4 +1,4 @@
-#views.py
+# views.py - Updated for Enhanced PDF2text.py
 
 from django.shortcuts import render, redirect
 from django.http import HttpResponse
@@ -13,10 +13,9 @@ from .utils import (
     translate_chunks,           # Google
     gemini_translate_text,      # Gemini
     gemini_translate_chunks,    # Gemini
-    translate_blocks,
+    translate_blocks,           # Keep for backward compatibility
     rebuild_pdf
 )
-
 
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -37,27 +36,6 @@ from django.conf import settings
 
 FONTS = settings.FONTS
 FONT_PATH = settings.FONT_PATH
-
-# FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts")
-
-# FONTS = {
-#     "default": ("NotoSans", "NotoSans.ttf"),   # universal fallback
-#     "hi": ("NotoSansDevanagari", "NotoSansDevanagari.ttf"),
-#     "bn": ("NotoSansBengali", "NotoSansBengali.ttf"),
-#     "ta": ("NotoSansTamil", "NotoSansTamil.ttf"),
-#     "te": ("NotoSansTelugu", "NotoSansTelugu.ttf"),
-#     "gu": ("NotoSansGujarati", "NotoSansGujarati.ttf"),
-#     "mr": ("NotoSansDevanagari", "NotoSansDevanagari.ttf"),
-#     "pa": ("NotoSansGurmukhi", "NotoSansGurmukhi.ttf"),
-#     "zh": ("NotoSansSC", "NotoSansSC.ttf"),   # Simplified Chinese
-#     "ja": ("NotoSansJP", "NotoSansJP.ttf"),
-#     "ko": ("NotoSansKR", "NotoSansKR.ttf"),
-#     "ar": ("NotoNaskhArabic", "NotoNaskhArabic.ttf"),
-#     "ru": ("NotoSans", "NotoSans.ttf"),
-#     "fa": ("NotoNaskhArabic", "NotoNaskhArabic.ttf"),
-#     "ur": ("NotoNaskhArabic", "NotoNaskhArabic.ttf"),
-#     # Add more scripts if needed
-# }
 
 for lang, (font_name, font_file) in FONTS.items():
     try:
@@ -81,50 +59,114 @@ def translate_view(request):
 
             try:
                 if source_file:  
-                    # ✅ PDF pipeline
-                    data = extract_blocks_from_pdf(source_file)
+                    # ✅ Enhanced PDF pipeline with smart span batching
+                    logger.info(f"Processing PDF with enhanced extraction: {source_file.name}")
+                    
+                    # The new extract_blocks_from_pdf now handles translation internally
+                    data = extract_blocks_from_pdf(
+                        source_file,
+                        source_lang=source_lang_slug,
+                        target_lang=target_lang_slug,
+                        engine=engine,
+                        debug=True  # Enable debug for development
+                    )
+                    
+                    # Check if translation was successful
+                    metadata = data.get("metadata", {})
+                    if metadata.get("errors"):
+                        logger.warning(f"PDF processing had errors: {metadata['errors']}")
+                        for error in metadata['errors'][:3]:  # Show first 3 errors
+                            messages.warning(request, f"Processing warning: {error}")
+                    
+                    translated_pages = data.get("pages", [])
+                    
+                    if not translated_pages:
+                        messages.error(request, "No content could be extracted from the PDF.")
+                        return render(request, 'translator/translate.html', {'form': form})
 
-                    translated_pages = []
-                    for page in data["pages"]:
-                        translated_blocks = translate_blocks(
-                            page["blocks"], source_lang_slug, target_lang_slug, engine
-                        )
-                        translated_pages.append({"blocks": translated_blocks})
-
-                    # Save safe blocks into session
+                    # Save enhanced blocks into session (with span structure preserved)
                     safe_pages = []
                     for page in translated_pages:
                         safe_blocks = []
-                        for block in page["blocks"]:
+                        for block in page.get("blocks", []):
                             if block["type"] == "text":
-                                # only keep serializable fields and normalize bbox to tuple
-                                clean_block = {
-                                    "type": "text",
-                                    "bbox": tuple(block.get("bbox", ())),
-                                    "text": block.get("text", "")
-                                }
+                                # Keep the enhanced span structure if available
+                                if "lines" in block:
+                                    # New enhanced format with spans
+                                    clean_block = {
+                                        "type": "text",
+                                        "bbox": tuple(block.get("bbox", ())),
+                                        "text": block.get("text", ""),
+                                        "lines": block.get("lines", [])  # Preserve span structure
+                                    }
+                                else:
+                                    # Fallback to simple format
+                                    clean_block = {
+                                        "type": "text",
+                                        "bbox": tuple(block.get("bbox", ())),
+                                        "text": block.get("text", "")
+                                    }
                                 safe_blocks.append(clean_block)
+                                
+                            elif block["type"] == "image":
+                                # Enhanced image block with OCR data
+                                image_block = {
+                                    "type": "image",
+                                    "bbox": tuple(block.get("bbox", ())),
+                                }
+                                
+                                # Include OCR text if available
+                                if block.get("image_text"):
+                                    image_block["image_text"] = block["image_text"]
+                                if block.get("original_ocr"):
+                                    image_block["original_ocr"] = block["original_ocr"]
+                                if block.get("translated_ocr"):
+                                    image_block["translated_ocr"] = block["translated_ocr"]
+                                
+                                safe_blocks.append(image_block)
+                                
                             else:
-                                # keep only bbox & type for non-text blocks
+                                # Other block types
                                 safe_blocks.append({
-                                    "type": block.get("type"),
+                                    "type": block.get("type", "other"),
                                     "bbox": tuple(block.get("bbox", ()))
                                 })
+                        
                         safe_pages.append({"blocks": safe_blocks})
 
                     request.session["translated_pages"] = safe_pages
+                    
+                    # Store translation metadata
+                    request.session["translation_metadata"] = {
+                        "source_lang": source_lang_slug,
+                        "target_lang": target_lang_slug,
+                        "engine": engine,
+                        "total_pages": metadata.get("total_pages", len(safe_pages)),
+                        "processing_errors": len(metadata.get("errors", []))
+                    }
 
                     # Save original PDF to session
-                    temp_path = os.path.join(settings.MEDIA_ROOT, "last_uploaded.pdf")
+                    temp_path = os.path.join(settings.MEDIA_ROOT, f"uploaded_{request.session.session_key or 'temp'}.pdf")
+                    os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+                    
                     with open(temp_path, "wb+") as dest:
                         for chunk in source_file.chunks():
                             dest.write(chunk)
                     request.session["original_pdf_path"] = temp_path
 
+                    # Success message with details
+                    page_count = metadata.get("total_pages", len(safe_pages))
+                    error_count = len(metadata.get("errors", []))
+                    
+                    if error_count == 0:
+                        messages.success(request, f"PDF translated successfully! {page_count} pages processed with enhanced formatting.")
+                    else:
+                        messages.info(request, f"PDF translated with {error_count} minor issues. {page_count} pages processed.")
+
                     return redirect("download_pdf")
 
                 else:  
-                    # ✅ Text pipeline
+                    # ✅ Text pipeline (unchanged - works with existing utils)
                     if engine == "google":
                         if len(source_text) <= 4000:
                             translated_text = GoogleTranslator(
@@ -141,19 +183,28 @@ def translate_view(request):
                             chunks = chunk_text(source_text)
                             translated_text = gemini_translate_chunks(chunks, source_lang_slug, target_lang_slug)
 
+                    # Save to database
                     Translation.objects.create(
-                        source_text=source_text,
+                        source_text=source_text[:5000],  # Limit for database
                         source_lang_slug=source_lang_slug,
                         target_lang_slug=target_lang_slug,
-                        translated_text=translated_text
+                        translated_text=translated_text[:5000] if translated_text else ""
                     )
 
                     request.session["translated_text_only"] = translated_text
-                    request.session["translated_pages"] = []  # clear old PDF session
+                    request.session["translated_pages"] = []  # Clear old PDF session
                     request.session["original_pdf_path"] = None
+                    request.session["translation_metadata"] = {
+                        "source_lang": source_lang_slug,
+                        "target_lang": target_lang_slug,
+                        "engine": engine,
+                        "text_length": len(source_text)
+                    }
+
+                    messages.success(request, "Text translated successfully!")
 
             except Exception as e:
-                logger.error(f"Translation failed: {e}")
+                logger.error(f"Translation failed: {e}", exc_info=True)
                 messages.error(request, f"Translation failed: {str(e)}")
 
     return render(request, 'translator/translate.html', {
@@ -161,72 +212,137 @@ def translate_view(request):
         'translated_text': translated_text
     })
 
+
 def download_pdf(request):
     """
-    Download the last translated result as PDF:
-    - If uploaded PDF → rebuild with formatting
-    - If pasted text → create plain text PDF
+    Enhanced PDF download with support for new span-based structure.
     """
     try:
         translated_pages = request.session.get("translated_pages", [])
         original_pdf_path = request.session.get("original_pdf_path", None)
         translated_text_only = request.session.get("translated_text_only", None)
+        translation_metadata = request.session.get("translation_metadata", {})
 
-        # ✅ Case 1: PDF Upload
+        # ✅ Case 1: Enhanced PDF Upload
         if translated_pages and original_pdf_path:
-            output_pdf = rebuild_pdf(translated_pages, original_pdf_path)
-            response = HttpResponse(output_pdf, content_type="application/pdf")
-            response['Content-Disposition'] = 'attachment; filename="translated.pdf"'
-            return response
+            logger.info("Rebuilding PDF with enhanced formatting")
+            
+            # Get target language for font selection
+            target_lang = translation_metadata.get("target_lang", "default")
+            
+            try:
+                output_pdf = rebuild_pdf(translated_pages, original_pdf_path, target_lang)
+                
+                # Cleanup temporary file
+                try:
+                    if os.path.exists(original_pdf_path):
+                        os.remove(original_pdf_path)
+                        request.session["original_pdf_path"] = None
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
+                
+                response = HttpResponse(output_pdf, content_type="application/pdf")
+                response['Content-Disposition'] = 'attachment; filename="translated_document.pdf"'
+                response['Content-Length'] = len(output_pdf)
+                
+                return response
+                
+            except Exception as rebuild_error:
+                logger.error(f"PDF rebuild failed: {rebuild_error}")
+                return HttpResponse(f"PDF generation failed: {str(rebuild_error)}", 
+                                  content_type="text/plain", status=500)
 
-        # ✅ Case 2: Text Input
+        # ✅ Case 2: Text Input with target language font support
         elif translated_text_only:
+            logger.info("Generating PDF from translated text")
+            
             buffer = io.BytesIO()
             c = canvas.Canvas(buffer, pagesize=A4)
             width, height = A4
 
-            # Load default font
-            font_name, font_file = FONTS.get("default", FONTS["default"])
+            # Get appropriate font for target language
+            target_lang = translation_metadata.get("target_lang", "default")
+            try:
+                font_name, font_file = FONTS.get(target_lang, FONTS["default"])
+            except:
+                font_name, font_file = FONTS["default"]
+            
             font_path = os.path.join(FONT_PATH, font_file)
-            pdfmetrics.registerFont(TTFont(font_name, font_path))
-            c.setFont(font_name, 12)
+            
+            try:
+                pdfmetrics.registerFont(TTFont(font_name, font_path))
+                c.setFont(font_name, 12)
+            except Exception as font_error:
+                logger.warning(f"Font registration failed: {font_error}")
+                # Fallback to default
+                default_font, default_file = FONTS["default"]
+                font_path = os.path.join(FONT_PATH, default_file)
+                pdfmetrics.registerFont(TTFont(default_font, font_path))
+                c.setFont(default_font, 12)
+                font_name = default_font
 
-            # Simple word wrapping
+            # Enhanced word wrapping with better spacing
             from reportlab.pdfbase.pdfmetrics import stringWidth
             max_width = width - 100  # left+right margins
             x, y = 50, height - 50
-            for line in translated_text_only.split("\n"):
-                words = line.split(" ")
-                current_line = ""
-                for word in words:
-                    trial = (current_line + " " + word).strip()
-                    if stringWidth(trial, font_name, 12) <= max_width:
-                        current_line = trial
-                    else:
+            line_height = 16  # Better line spacing
+            
+            for paragraph in translated_text_only.split("\n\n"):
+                if not paragraph.strip():
+                    continue
+                    
+                # Process each paragraph
+                for line in paragraph.split("\n"):
+                    words = line.split(" ")
+                    current_line = ""
+                    
+                    for word in words:
+                        trial = (current_line + " " + word).strip()
+                        try:
+                            line_width = stringWidth(trial, font_name, 12)
+                        except:
+                            line_width = len(trial) * 7  # Approximate fallback
+                        
+                        if line_width <= max_width:
+                            current_line = trial
+                        else:
+                            if current_line:
+                                c.drawString(x, y, current_line)
+                                y -= line_height
+                            current_line = word
+                            
+                            # Check for page break
+                            if y < 50:
+                                c.showPage()
+                                c.setFont(font_name, 12)
+                                y = height - 50
+                    
+                    # Draw remaining text in line
+                    if current_line:
                         c.drawString(x, y, current_line)
-                        y -= 15
-                        current_line = word
-                        if y < 50:  # new page
+                        y -= line_height
+                        
+                        if y < 50:
                             c.showPage()
                             c.setFont(font_name, 12)
                             y = height - 50
-                if current_line:
-                    c.drawString(x, y, current_line)
-                    y -= 15
-                    if y < 50:
-                        c.showPage()
-                        c.setFont(font_name, 12)
-                        y = height - 50
+                
+                # Add paragraph spacing
+                y -= line_height // 2
 
             c.save()
             buffer.seek(0)
+            
             response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
             response['Content-Disposition'] = 'attachment; filename="translated_text.pdf"'
+            response['Content-Length'] = len(buffer.getvalue())
+            
             return response
 
         else:
-            return HttpResponse("No translated result available.", content_type="text/plain")
+            return HttpResponse("No translated content available. Please translate a document first.", 
+                              content_type="text/plain", status=400)
 
     except Exception as e:
-        return HttpResponse(f"Error: {str(e)}", content_type="text/plain")
-
+        logger.error(f"Download failed: {e}", exc_info=True)
+        return HttpResponse(f"Download failed: {str(e)}", content_type="text/plain", status=500)

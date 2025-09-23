@@ -1,0 +1,78 @@
+
+=== PAGE 1 ===
+
+Block 0: Found 1 text runs
+Translating: 'IOSR Journal Of Humanities And Social Science (IOSR-JHSS)Volume 13, Issue 3 (Jul. Aug. 2013), PP 51-...'
+Translation result: 'IOSR Журнал гуманитарных и социальных наук (IOSR-JHSS) Том 13, выпуск 3 (июль. Август 2013 г.), стр....'
+
+Block 1: Found 1 text runs
+Translating: 'www.iosrjournals.org 51 | Page...'
+Translation result: 'www.iosrjournals.org 51 | Страница...'
+
+Block 2: Found 1 text runs
+Translating: 'Indian Pharmaceutical Industry: An Overview...'
+Translation result: 'Индийская фармацевтическая промышленность: обзор...'
+
+Block 3: Found 1 text runs
+Translating: 'Gulshan Akhtar...'
+Translation result: 'Гульшан Ахтар...'
+
+Block 4: Found 2 text runs
+Translating: 'Abstract:Keywords:...'
+Translation result: 'Аннотация: ключевые слова:...'
+Translating: 'Pharmaceutical industry contributes to the welfare of humanity and provides significant socio-econom...'
+Translation result: 'Фармацевтическая промышленность способствует благосостоянию человечества и обеспечивает значительные...'
+
+Block 5: Found 3 text runs
+Translating: 'I....'
+Translation result: 'Я....'
+Translating: 'Introduction...'
+Translation result: 'Введение...'
+Translating: 'Health is defined both as cause and effect of economic development, and the pharmaceutical industry ...'
+Translation result: 'Здоровье определяется как причиной, так и следствия экономического развития, и фармацевтическая пром...'
+
+Block 6: Found 2 text runs
+Translating: 'II.Global Pharmaceutical...'
+Translation result: 'II.Global Pharmaceutical...'
+Translating: 'The majority of global pharmaceutical sales originated in the „Triad‟ (US, European Union and Japan)...'
+Translation result: 'Большинство глобальных фармацевтических продаж возникли в «Триаде» (США, Европейский Союз и Япония),...'
+
+Block 7: Found 1 text runs
+Translating: 'Table-1: Global Pharmaceutical Sales by Region (2006-08)...'
+Translation result: 'Таблица 1: Глобальные продажи фармацевтических препаратов по региону (2006-08)...'
+
+Block 8: Found 1 text runs
+Translating: 'No.RegionSales US$ BillionMarket Share (%) 200620072008200620072008 1.North America289.9304.5311847....'
+Translation result: '№ Regionsales долл. США в доллар США (%) 200620072008200620072008 1.North America289.9304.5311847.74...'
+
+Block 9: Found 1 text runs
+Translating: '3.Asia, Africa & Australia52.062.290.88.69.411.8...'
+Translation result: '3. Asia, Africa & Australia52.062.290.88.69.411.8...'
+
+Block 10: Found 2 text runs
+Translating: '4.Japan56.758.576.69.38.89.95.Latin America27.532.046.54.54.86.0Total607.9663.5773.1100.0100.0100.0...'
+Translation result: '4. Japan56.758.576.69.38.89.95.latin America27.532.046.54.54.86.0total607.9663.5773.1100.0100.0100.0...'
+Translating: 'Note: Ranked by 2008 Global salesSource: IMS Health Inc....'
+Translation result: 'Примечание. Опираясь на Global Salessource 2008 года: IMS Health Inc....'
+
+=== PAGE 2 ===
+
+Block 0: Found 1 text runs
+Translating: 'Indian Pharmaceutical Industry: An Overview...'
+Translation result: 'Индийская фармацевтическая промышленность: обзор...'
+
+Block 1: Found 1 text runs
+Translating: 'www.iosrjournals.org 54 | Page...'
+Translation result: 'www.iosrjournals.org 54 | Страница...'
+
+Block 2: Found 1 text runs
+Translating: 'Chart-1: Evaluation of Indian Pharmaceutical Industry...'
+Translation result: 'Диаграмма-1: оценка индийской фармацевтической промышленности...'
+
+Block 3: Found 3 text runs
+Translating: 'The government of India is striving hard to put pharmaceutical industry on the sound track of growth...'
+Translation result: 'Правительство Индии пытается поставить фармацевтическую промышленность на звуковой путь роста и разв...'
+Translating: '...'
+Translation result: '...'
+Translating: 'st...'
+Translation result: 'ул...'
