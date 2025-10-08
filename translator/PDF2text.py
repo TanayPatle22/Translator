@@ -1,3 +1,4 @@
+
 # PDF2text.py - Enhanced with Smart Span Batching
 
 import fitz  # PyMuPDF
@@ -9,8 +10,14 @@ import logging
 import json
 import base64
 import re
+import statistics
 from dataclasses import dataclass, asdict
 from collections import defaultdict
+import easyocr
+import cv2
+import numpy as np
+# Use a global dictionary to cache multiple reader instances.
+_OCR_READER_CACHE = {}
 
 # Import translation utilities
 try:
@@ -231,161 +238,237 @@ class SmartPDFProcessor:
                         "type": "other",
                         "bbox": block["bbox"]
                     })
-                    
+
             except Exception as e:
                 logger.warning(f"Block {block_idx} on page {page_num} failed: {e}")
                 continue
-        
+            page_data_json = f"page_{page_num}_data.json"
+            try:
+                with open(page_data_json, 'w', encoding='utf-8') as f:
+                    # Use json.dump to write the dictionary to the file
+                    # 'indent=4' makes the file human-readable (pretty-printed)
+                    json.dump(page_data, f, indent=4)
+            except Exception as e:
+                # Handle potential errors during file writing
+                print(f"Error writing page {page_num} data to file: {e}")
         return page_data
     
-    def _process_text_block(self, block: Dict[str, Any], page_num: int, block_idx: int,
-                           source_lang: str, target_lang: str, engine: str) -> Dict[str, Any]:
-        """Process text block with intelligent span batching."""
+    # def _process_text_block(self, block: Dict[str, Any], page_num: int, block_idx: int,
+    #                        source_lang: str, target_lang: str, engine: str) -> Dict[str, Any]:
+    #     """Process text block with intelligent span batching."""
         
-        # Group spans by style
-        text_runs = self._create_text_runs(block)
+    #     # Group spans by style
+    #     text_runs = self._create_text_runs(block)
         
-        if self.debug_mode:
-            self.debug_files['output'].write(f"\nBlock {block_idx}: Found {len(text_runs)} text runs\n")
+    #     if self.debug_mode:
+    #         self.debug_files['output'].write(f"\nBlock {block_idx}: Found {len(text_runs)} text runs\n")
             
-            # Save text runs for debugging
-            runs_debug = []
-            for style_hash, run in text_runs.items():
-                runs_debug.append({
-                    "style": asdict(run.style),
-                    "text": run.text,
-                    "clean_text": run.clean_text(),
-                    "span_count": len(run.spans)
-                })
+    #         # Save text runs for debugging
+    #         runs_debug = []
+    #         for style_hash, run in text_runs.items():
+    #             runs_debug.append({
+    #                 "style": asdict(run.style),
+    #                 "text": run.text,
+    #                 "clean_text": run.clean_text(),
+    #                 "span_count": len(run.spans)
+    #             })
             
-            json.dump(runs_debug, self.debug_files['runs'], indent=2, ensure_ascii=False)
-            self.debug_files['runs'].write('\n')
+    #         json.dump(runs_debug, self.debug_files['runs'], indent=2, ensure_ascii=False)
+    #         self.debug_files['runs'].write('\n')
         
-        # Translate text runs
-        translated_runs = self._translate_text_runs(
-            text_runs, source_lang, target_lang, engine, page_num, block_idx
-        )
+    #     # Translate text runs
+    #     translated_runs = self._translate_text_runs(
+    #         text_runs, source_lang, target_lang, engine, page_num, block_idx
+    #     )
         
-        # Reconstruct block with translated spans
-        translated_block = self._reconstruct_text_block(block, translated_runs)
+    #     # Reconstruct block with translated spans
+    #     translated_block = self._reconstruct_text_block(block, translated_runs)
         
-        return translated_block
+    #     return translated_block
     
-    def _create_text_runs(self, block: Dict[str, Any]) -> Dict[int, TextRun]:
-        """Create text runs by grouping spans with identical styling."""
-        
-        text_runs = {}
-        current_y = None
-        line_height_threshold = 0  # Will be calculated dynamically
-        
+
+    def _process_text_block(self, block: Dict[str, Any], page_num: int, block_idx: int,
+                       source_lang: str, target_lang: str, engine: str) -> Dict[str, Any]:
+        """
+        Processes a text block by first segmenting it into paragraphs, then creating
+        style-based text runs within each paragraph.
+        """
+        # 1. Segment the block's spans into paragraphs
+        paragraphs = self._segment_block_into_paragraphs(block)
+
+        # 2. Process each paragraph to create text runs
+        all_text_runs = []
+        for paragraph_spans in paragraphs:
+            runs = self._process_spans_into_runs(paragraph_spans)
+            all_text_runs.extend(runs)
+
+        if self.debug_mode:
+            logger.debug(f"Block {block_idx}: Found {len(paragraphs)} paragraphs, creating {len(all_text_runs)} text runs.")
+
+        # 3. Translate the collected text runs
+        translated_runs = self._translate_text_runs(
+            all_text_runs, source_lang, target_lang, engine, page_num, block_idx
+        )
+
+        # 4. Reconstruct the block with translated content
+        translated_block = self._reconstruct_text_block(block, translated_runs)
+        return translated_block
+
+    def _segment_block_into_paragraphs(self, block: Dict[str, Any]) -> List[List[Dict[str, Any]]]:
+        """
+        Analyzes lines in a block and segments all its spans into a list of paragraphs.
+        Each paragraph is a list of its constituent spans.
+        """
+        if not block.get("lines"):
+            return []
+
+        # First pass: Collect detailed line data for analysis
+        line_data = []
         for line in block["lines"]:
             line_bbox = line["bbox"]
-            line_y = line_bbox[1]  # Top y-coordinate
-            
-            # Calculate line height for paragraph detection
-            if current_y is not None:
-                line_gap = abs(line_y - current_y)
-                if line_height_threshold == 0:
-                    line_height_threshold = line_gap * 1.5  # 1.5x normal line height
-            current_y = line_y
-            
-            # Check for paragraph break (large vertical gap)
-            is_paragraph_break = (current_y is not None and 
-                                line_gap > line_height_threshold if 'line_gap' in locals() else False)
-            
-            for span in line["spans"]:
-                try:
-                    # Create style signature
-                    style = SpanStyle(
-                        size=span.get("size", 12),
-                        flags=span.get("flags", 0),
-                        font=span.get("font", "default"),
-                        color=span.get("color", 0),
-                        alpha=span.get("alpha", 255),
-                        ascender=span.get("ascender", 0.8),
-                        descender=span.get("descender", -0.2),
-                        bidi=span.get("bidi", 0),
-                        char_flags=span.get("char_flags", 0)
-                    )
-                    
-                    style_hash = hash(style)
-                    text = span.get("text", "").strip()
-                    
-                    if not text:
-                        continue
-                    
-                    # Create or update text run
-                    if style_hash not in text_runs:
-                        text_runs[style_hash] = TextRun(
-                            style=style,
-                            text="",
-                            spans=[],
-                            line_breaks=[]
-                        )
-                    """
-                    # We find spans with these styles:
-                    span1: "Hello" (Arial, 12pt) → hash = 111
-                    span2: " world" (Arial, 12pt) → hash = 111 (same style!)  
-                    span3: "TITLE" (Arial, 18pt) → hash = 222 (different style)
+            line_text = " ".join(span.get("text", "") for span in line.get("spans", [])).strip()
+            line_data.append({
+                "bbox": line_bbox,
+                "text": line_text,
+                "y_pos": line_bbox[1],
+                "x_start": line_bbox[0],
+                "line_width": line_bbox[2] - line_bbox[0],
+                "spans": line.get("spans", [])
+            })
 
-                    # Step 1: Process span1
-                    if 111 not in text_runs:  # True, first time seeing this style
-                        text_runs[111] = TextRun(text="", spans=[], ...)  # Create new group
-                        
-                    text_runs[111].add_span(span1, "Hello")  # Add "Hello" to the group
+        # --- Calculate dynamic thresholds based on block's content ---
+        line_gaps = [abs(line_data[i]["y_pos"] - line_data[i-1]["y_pos"])
+                    for i in range(1, len(line_data))]
+        base_line_height = statistics.median(g for g in line_gaps if g > 0) if any(g > 0 for g in line_gaps) else 15
+        vertical_gap_threshold = base_line_height * 1.5 # A gap > 1.5x the median line height is a para break
 
-                    # Step 2: Process span2  
-                    if 111 not in text_runs:  # False, we already have this style
-                        # Skip creating new group
-                        
-                    text_runs[111].add_span(span2, " world")  # Add " world" to existing group
-                    # Now text_runs[111].text = "Hello world"
+        line_widths = [ld["line_width"] for ld in line_data if ld["line_width"] > 0]
+        avg_line_width = statistics.mean(line_widths) if line_widths else 400
+        short_line_threshold = avg_line_width * 0.7
 
-                    # Step 3: Process span3
-                    if 222 not in text_runs:  # True, new style
-                        text_runs[222] = TextRun(text="", spans=[], ...)  # Create new group
-                        
-                    text_runs[222].add_span(span3, "TITLE")  # Add "TITLE" to new group
+        # --- Segment spans into paragraphs ---
+        all_paragraphs = []
+        current_paragraph_spans = []
 
-                    # Final result:
-                    text_runs = {
-                        111: TextRun(text="Hello world", spans=[span1, span2]),  # Same style grouped
-                        222: TextRun(text="TITLE", spans=[span3])                # Different style separate
-                    }
-                    """
+        for i, line_info in enumerate(line_data):
+            is_paragraph_break = False
+            if i > 0:
+                previous_line = line_data[i-1]
+                vertical_gap = abs(line_info["y_pos"] - previous_line["y_pos"])
 
-                    # Add span to run (with paragraph break detection)
-                    text_runs[style_hash].add_span(
-                        span, text, is_line_break=is_paragraph_break
-                    )
-                    
-                    if is_paragraph_break:
-                        is_paragraph_break = False  # Reset flag
-                        
-                except Exception as e:
-                    logger.warning(f"Failed to process span: {e}")
-                    continue
-        
+                # PRIMARY SIGNAL: Large vertical gap
+                if vertical_gap > vertical_gap_threshold:
+                    is_paragraph_break = True
+                else:
+                    # SECONDARY SIGNALS
+                    previous_is_short = previous_line["line_width"] < short_line_threshold
+                    is_indented = abs(line_info["x_start"] - previous_line["x_start"]) > 10
+
+                    previous_ends_punct = previous_line["text"].rstrip().endswith(('.', '!', '?', ':'))
+                    current_starts_capital = line_info["text"] and line_info["text"][0].isupper()
+
+                    if previous_is_short and is_indented:
+                        is_paragraph_break = True
+                    elif (previous_ends_punct and current_starts_capital and
+                        vertical_gap > base_line_height * 1.2):
+                        is_paragraph_break = True
+
+            if is_paragraph_break and current_paragraph_spans:
+                all_paragraphs.append(current_paragraph_spans)
+                current_paragraph_spans = []
+
+            current_paragraph_spans.extend(line_info["spans"])
+
+        # Add the last paragraph
+        if current_paragraph_spans:
+            all_paragraphs.append(current_paragraph_spans)
+
+        try:
+            with open('paragraphs_output.json', 'w', encoding='utf-8') as f:
+                json.dump(all_paragraphs, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Error writing paragraphs_output.json: {e}")
+        return all_paragraphs
+
+    def _process_spans_into_runs(self, paragraph_spans: List[Dict[str, Any]]) -> List[TextRun]:
+        """
+        Takes a list of spans for a single paragraph and groups them into
+        style-consistent TextRun objects.
+        """
+        if not paragraph_spans:
+            return []
+
+        text_runs = []
+        current_run = None
+
+        for span in paragraph_spans:
+            text = span.get("text", "").strip()
+            if not text:
+                continue
+
+            style = self._create_span_style(span)
+
+            # If no current run, or if the style is significantly different, create a new run
+            if not current_run or self._should_force_new_run(style, current_run):
+                if current_run:
+                    text_runs.append(current_run)
+                current_run = TextRun(style=style, text="", spans=[], line_breaks=[])
+
+            current_run.add_span(span, text)
+
+        if current_run:
+            text_runs.append(current_run)
+
         return text_runs
     
-    def _translate_text_runs(self, text_runs: Dict[int, TextRun], 
-                            source_lang: str, target_lang: str, engine: str,
-                            page_num: int, block_idx: int) -> Dict[int, TextRun]:
-        """Translate all text runs for a block."""
+    def _create_span_style(self, span: Dict[str, Any]) -> SpanStyle:
+        """Helper to create a SpanStyle object from a span dictionary."""
+        return SpanStyle(
+            size=span.get("size", 12),
+            flags=span.get("flags", 0),
+            font=span.get("font", "default"),
+            color=span.get("color", 0),
+            alpha=span.get("alpha", 255),
+            ascender=span.get("ascender", 0.8),
+            descender=span.get("descender", -0.2),
+            bidi=span.get("bidi", 0),
+            char_flags=span.get("char_flags", 0)
+    )
+
+    def _should_force_new_run(self, current_style: SpanStyle, existing_run: Optional[TextRun]) -> bool:
+        """Check if we should force a new text run due to significant style changes."""
+        if not existing_run:
+            return True
+
+        existing_style = existing_run.style
+
+        # Force new run for major style differences
+        is_font_family_change = current_style.font != existing_style.font
+        is_major_size_change = abs(current_style.size - existing_style.size) > 2.0
+        is_bold_change = (current_style.flags & 16) != (existing_style.flags & 16)
+        is_italic_change = (current_style.flags & 2) != (existing_style.flags & 2)
+        is_color_change = abs(current_style.color - existing_style.color) > 100000
+        is_run_too_long = len(existing_run.text) > 2000 # Split long runs for better API context
+
+        return any([is_font_family_change, is_major_size_change, is_bold_change,
+                    is_italic_change, is_color_change, is_run_too_long])
+    
+    def _translate_text_runs(self, text_runs: List[TextRun],
+                        source_lang: str, target_lang: str, engine: str,
+                        page_num: int, block_idx: int) -> List[TextRun]:
+        """Translates a list of TextRun objects."""
         
-        translated_runs = {}
+        translated_runs = []
         
-        for style_hash, run in text_runs.items():
+        # Iterate directly over the list of runs
+        for run in text_runs:
             try:
                 clean_text = run.clean_text()
                 
                 if not clean_text or len(clean_text.strip()) < 2:
-                    translated_runs[style_hash] = run
+                    translated_runs.append(run) # Keep original if empty
                     continue
-                
-                if self.debug_mode:
-                    self.debug_files['output'].write(f"Translating: '{clean_text[:100]}...'\n")
-                
+
                 # Translate using the translation manager
                 result = translation_manager.translate_text(
                     clean_text, source_lang, target_lang, engine
@@ -402,19 +485,14 @@ class SmartPDFProcessor:
                         spans=run.spans,  # Keep original spans for bbox info
                         line_breaks=run.line_breaks
                     )
-                    translated_runs[style_hash] = translated_run
-                    
-                    if self.debug_mode:
-                        self.debug_files['output'].write(
-                            f"Translation result: '{result.translated_text[:100]}...'\n"
-                        )
+                    translated_runs.append(translated_run)
                 else:
-                    logger.warning(f"Translation failed for page {page_num}, block {block_idx}: {result.error_message}")
-                    translated_runs[style_hash] = run  # Keep original
+                    logger.warning(f"Translation failed on page {page_num}, block {block_idx}: {result.error_message}")
+                    translated_runs.append(run)  # Keep original on failure
                     
             except Exception as e:
-                logger.error(f"Translation error: {e}")
-                translated_runs[style_hash] = run  # Keep original on error
+                logger.error(f"Error during translation of run: {e}")
+                translated_runs.append(run) # Keep original on error
         
         return translated_runs
     
@@ -445,140 +523,181 @@ class SmartPDFProcessor:
         
         return original_style  # No change needed
     
-    def _reconstruct_text_block(self, original_block: Dict[str, Any], 
-                               translated_runs: Dict[int, TextRun]) -> Dict[str, Any]:
-        """Reconstruct the text block with translated content."""
+    def _reconstruct_text_block(self, original_block: Dict[str, Any],
+                           translated_runs: List[TextRun]) -> Dict[str, Any]:
+        """Reconstructs the text block from a list of translated TextRun objects."""
         
-        # Create a mapping from original spans to translated text
-        span_translations = {}
-        
-        for style_hash, run in translated_runs.items():
+        span_translations = {} # Map span ID to its new text and font
+
+        for run in translated_runs:
             translated_text = run.text
             original_spans = run.spans
             
-            if not original_spans:
+            if not original_spans or not translated_text:
                 continue
             
-            # Distribute translated text across original spans
-            # Simple approach: put all text in first span, empty others
-            total_chars = sum(len(span.get("text", "")) for span in original_spans)
-            translated_chars = list(translated_text)
-            cursor = 0
-
-            for span in original_spans:
-                span_len = len(span.get("text", ""))
-                if total_chars > 0:
-                    alloc = max(1, round(len(translated_chars) * (span_len / total_chars)))
+            # Distribute the translated text back across the original spans proportionally
+            words = translated_text.split()
+            total_original_chars = sum(len(span.get("text", "")) for span in original_spans)
+            
+            word_cursor = 0
+            for i, span in enumerate(original_spans):
+                original_char_len = len(span.get("text", ""))
+                
+                # Allocate a number of words proportional to the span's original size
+                share = original_char_len / total_original_chars if total_original_chars > 0 else 1/len(original_spans)
+                num_words_for_span = round(len(words) * share)
+                
+                # Ensure the last span gets all remaining words
+                if i == len(original_spans) - 1:
+                    span_text = " ".join(words[word_cursor:])
                 else:
-                    alloc = len(translated_chars)
-
-                chunk = "".join(translated_chars[cursor:cursor+alloc])
-                span_translations[id(span)] = chunk
-                cursor += alloc
-                    
-        # Reconstruct the block structure
+                    span_text = " ".join(words[word_cursor : word_cursor + num_words_for_span])
+                
+                span_translations[id(span)] = {
+                    "text": span_text,
+                    "font": run.style.font
+                }
+                word_cursor += num_words_for_span
+                
+        # Rebuild the block structure line by line, span by span
         reconstructed_block = {
             "type": "text",
             "bbox": original_block["bbox"],
             "lines": []
         }
         
-        # Process lines and spans
-        for line in original_block["lines"]:
-            new_line = {
-                "spans": [],
-                "wmode": line.get("wmode", 0),
-                "dir": line.get("dir", [1.0, 0.0]),
-                "bbox": line["bbox"]
-            }
-            
-            for span in line["spans"]:
-                span_id = id(span)
+        for line in original_block.get("lines", []):
+            new_line = line.copy()
+            new_line["spans"] = []
+            for span in line.get("spans", []):
                 new_span = span.copy()
-                
-                # Replace text with translation if available
-                if span_id in span_translations:
-                    new_span["text"] = span_translations[span_id]
-
-                    for run in translated_runs.values():
-                        if any(s is span for s in run.spans):
-                            new_span["font"] = run.style.font  # Updated font
-                            break
+                if id(span) in span_translations:
+                    translation_info = span_translations[id(span)]
+                    new_span["text"] = translation_info["text"]
+                    new_span["font"] = translation_info["font"]
                 
                 new_line["spans"].append(new_span)
             
             reconstructed_block["lines"].append(new_line)
         
-        # Extract combined text for compatibility
-        all_text = " ".join([
-            span["text"] for line in reconstructed_block["lines"] 
-            for span in line["spans"] if span["text"]
-        ])
-        
+        # Create the final combined text for the block
+        all_text = " ".join(
+            span.get("text", "") 
+            for line in reconstructed_block["lines"] 
+            for span in line["spans"] if span.get("text")
+        )
         reconstructed_block["text"] = all_text.strip()
         
         return reconstructed_block
     
-    def _process_image_block(self, page: fitz.Page, block: Dict[str, Any], 
-                            page_num: int, block_idx: int,
-                            source_lang: str, target_lang: str, engine: str) -> Dict[str, Any]:
-        """Process image block with OCR and translation."""
+    def get_ocr_reader(source_lang: str):
+        """
+        Lazily initializes and caches easyocr.Reader instances for different
+        language combinations, ensuring each is created only once.
+        """
+        # Create a consistent key for the language combination (e.g., ('en', 'hi')).
+        # We sort to ensure ('en', 'hi') and ('hi', 'en') use the same reader.
+        lang_list = sorted(list(set(['en', source_lang])))
+        cache_key = tuple(lang_list)
+
+        # If this specific reader isn't in our cache, create and store it.
+        if cache_key not in _OCR_READER_CACHE:
+            logging.info(f"Creating and caching new OCR reader for languages: {cache_key}...")
+            # This is the slow part that now only runs once per language combo.
+            _OCR_READER_CACHE[cache_key] = easyocr.Reader(lang_list, gpu=False) # Set gpu=True for GPU support
+        
+        # Return the cached reader.
+        return _OCR_READER_CACHE[cache_key]
+    
+    
+    def _process_image_block(self, page: fitz.Page, block: Dict[str, Any], page_num: int, block_idx: int, source_lang: str, target_lang: str, engine: str) -> Dict[str, Any]:
+        """Process image block with easyocr, translate text, and prepare for in-painting."""
         
         try:
-            # Extract image
+            # Step 1: Get the correct, cached OCR reader for the source language.
+            ocr_reader = get_ocr_reader(source_lang)
+
+            # Step 2: Extract image bytes from the PDF
             pix = page.get_pixmap(clip=block["bbox"])
-            
-            # Ensure proper format for OCR
-            if pix.alpha:
-                pix = fitz.Pixmap(pix, 0)
-            if pix.n != 3:
-                pix = fitz.Pixmap(fitz.csRGB, pix)
-            
-            # Perform OCR using PyMuPDF's built-in OCR
-            # ocr_pdf_bytes = pix.pdfocr_tobytes(language="eng")
-            # ocr_doc = fitz.open("pdf", ocr_pdf_bytes)
-            # ocr_page = ocr_doc[0]
-            # ocr_text = ocr_page.get_text("text").strip()
-            
-            ocr_doc.close()
-            
-            if self.debug_mode:
-                self.debug_files['output'].write(f"\nImage Block {block_idx}: OCR extracted '{ocr_text[:100]}...'\n")
-            
-            # Translate OCR text if found
-            # translated_text = None
-            # if ocr_text and len(ocr_text.strip()) > 2:
-            #     try:
-            #         result = translation_manager.translate_text(
-            #             ocr_text, source_lang, target_lang, engine
-            #         )
+            image_bytes = pix.tobytes("png")
+
+            # Step 3: Perform OCR on the image bytes
+            results = ocr_reader.readtext(image_bytes)
+
+            ocr_details = []
+            original_texts = []
+
+            # Step 4: Process and translate each detected text fragment
+            for (bbox, text, confidence) in results:
+                original_texts.append(text)
+                translated_text = text # Default to original text on failure
+
+                if text.strip():
+                    try:
+                        res = translation_manager.translate_text(
+                            text, source_lang, target_lang, engine
+                        )
+                        if res.success:
+                            translated_text = res.translated_text
+                    except Exception as e:
+                        logger.warning(f"Translation for OCR text failed: {e}")
+
+                ocr_details.append({
+                    "bbox": [[int(p[0]), int(p[1])] for p in bbox],
+                    "original_text": text,
+                    "translated_text": translated_text,
+                    "confidence": float(confidence)
+                })
+
+            # --- Your Future Goal: In-painting and Replacing Text (Debug Mode) ---
+            if self.debug_mode and ocr_details:
+                # Convert image bytes to an OpenCV image
+                nparr = np.frombuffer(image_bytes, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+                for detail in ocr_details:
+                    points = np.array(detail["bbox"], dtype=np.int32)
                     
-            #         if result.success:
-            #             translated_text = result.translated_text
-            #             if self.debug_mode:
-            #                 self.debug_files['output'].write(f"OCR Translation: '{translated_text[:100]}...'\n")
-            #         else:
-            #             logger.warning(f"OCR translation failed: {result.error_message}")
-                        
-            #     except Exception as e:
-            #         logger.error(f"OCR translation error: {e}")
-            
+                    # 1. Draw a green rectangle for the bounding box
+                    # We use polylines to draw the exact shape, even if rotated.
+                    cv2.polylines(img, [points], isClosed=True, color=(0, 255, 0), thickness=2)
+
+
+                    # 2. Write the translated text on top of the white box
+                    # Note: cv2.putText has poor support for non-ASCII chars.
+                    # For production, a library like Pillow is better for text rendering.
+                    top_left = tuple(points[0])
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    cv2.putText(img, detail["translated_text"], top_left, font, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+                
+                # Save the debug image
+                debug_img_path = f"debug_page_{page_num}_block_{block_idx}.png"
+                cv2.imwrite(debug_img_path, img)
+                logger.info(f"Saved debug image to {debug_img_path}")
+
+            # Step 5: Structure the final return value
+            combined_original_text = "\n".join(original_texts)
+            combined_translated_text = "\n".join([d["translated_text"] for d in ocr_details])
+
             return {
                 "type": "image",
                 "bbox": block["bbox"],
-                "image_text": translated_text or ocr_text,
-                "original_ocr": ocr_text,
-                "translated_ocr": translated_text
+                "image_text": combined_translated_text or combined_original_text, #Not Required for me, will remove later
+                "original_ocr": combined_original_text, #Not Required for me
+                "translated_ocr": combined_translated_text, #Not Required for me
+                "ocr_details": ocr_details # Store structured data for future use
             }
-            
+
         except Exception as e:
-            logger.error(f"Image processing failed: {e}")
+            logger.error(f"Image processing failed entirely for block {block_idx} on page {page_num}: {e}")
             return {
                 "type": "image",
                 "bbox": block["bbox"],
                 "image_text": None,
                 "error": str(e)
             }
+
 
 # Main function for backward compatibility
 def extract_blocks_from_pdf(pdf_file: Union[str, IO], 

@@ -137,7 +137,7 @@ def gemini_translate_text(text: str, source_lang: str, target_lang: str) -> str:
     """
 
     logger.debug("Initializing Gemini model…")
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")  # you can use gemini-pro / gemini-1.5-pro too
+    model = genai.GenerativeModel("gemini-1.5")  # you can use gemini-pro / gemini-1.5-pro too
     prompt = f"Translate the following text from {source_lang} to {target_lang}, IMPORTANT INSTRUCTIONS:- Output ONLY the translated text.- Do NOT include explanations, notes, romanizations, or comments.- Do NOT add headers like translation. - Keep the same formatting, line breaks, and numbering as the input. - If the text cannot be translated (e.g., proper nouns), leave it unchanged.:\n{text}"
     logger.debug(f"Prompt prepared (len={len(prompt)}): {prompt[:100]}...")
     
@@ -167,84 +167,6 @@ def gemini_translate_chunks(chunks: List[str], source_lang: str, target_lang: st
         translated_chunks.append(translated)
     return "\n\n".join(translated_chunks)
 
-def _run_translation(text, source_lang, target_lang, engine):
-    """Helper: translate text with Google/Gemini depending on length."""
-    if engine == "google":
-        if len(text) <= 4000:
-            return GoogleTranslator(source=source_lang, target=target_lang).translate(text)
-        else:
-            chunks = chunk_text(text)
-            return translate_chunks(chunks, source_lang, target_lang)
-    elif engine == "gemini":
-        if len(text) <= 4000:
-            return gemini_translate_text(text, source_lang, target_lang)
-        else:
-            chunks = chunk_text(text)
-            return gemini_translate_chunks(chunks, source_lang, target_lang)
-    return text
-
-def translate_blocks(blocks, source_lang, target_lang, engine="google"):
-    """
-    Translate only text blocks, keep images/others unchanged.
-    Returns updated blocks list.
-    """
-    translated_blocks = []
-
-    for block in blocks:
-        if block["type"] == "text":
-            text = block.get("text", "").strip()
-            if not text:
-                translated_blocks.append(block)
-                continue
-            # Pick engine
-            if engine == "google":
-                if len(text) <= 4000:
-                    translated = GoogleTranslator(
-                        source=source_lang,
-                        target=target_lang
-                    ).translate(text)
-                else:
-                    chunks = chunk_text(text)
-                    translated = translate_chunks(chunks, source_lang, target_lang)
-
-                
-            elif engine == "gemini":
-                if len(text) <= 4000:
-                    translated = gemini_translate_text(text, source_lang, target_lang)
-                else:
-                    chunks = chunk_text(text)
-                    translated = gemini_translate_chunks(chunks, source_lang, target_lang)
-
-            else:
-                translated = text  # fallback
-
-            block["text"] = translated
-            translated_blocks.append(block)
-
-        elif block["type"] == "image" and block.get("image_text"):
-            text = block["image_text"]
-            logger.debug(f"[TRANSLATE_BLOCKS] OCR raw: '{text[:80]}'")
-
-            translated = _run_translation(text, source_lang, target_lang, engine)
-            logger.debug(f"[TRANSLATE_BLOCKS] OCR translated: '{translated[:80]}'")
-
-            # keep original image block
-            translated_blocks.append(block)
-
-            # insert a new text block (just below the image)
-            x0, y0, x1, y1 = block["bbox"]
-            caption_block = {
-                "type": "text",
-                "bbox": (x0, y0 - 30, x1, y0 - 10),  # small box below image
-                "text": f'Translated text from image - "{translated}"'
-            }
-            logger.debug(f"[TRANSLATE_BLOCKS] Inserted caption block: {caption_block}")
-            translated_blocks.append(caption_block)
-
-        else:
-            translated_blocks.append(block)
-
-    return translated_blocks
 
 def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
     """

@@ -29,7 +29,7 @@ from translator.utils import (
     translate_chunks,
     gemini_translate_text,
     gemini_translate_chunks,
-    translate_blocks,  # Keep for backward compatibility
+    translate_text_simple,  # Keep for backward compatibility
     rebuild_pdf,
 )
 
@@ -150,7 +150,7 @@ def generate_pdf_from_text(text: str, target_lang: str = "default") -> bytes:
 
 # --- Enhanced Streamlit UI ---
 st.set_page_config(
-    page_title="Advanced Translator", 
+    page_title="Translator", 
     layout="wide",
     page_icon="🌐"
 )
@@ -187,7 +187,7 @@ st.markdown("""
 
 st.markdown("""
 <div class="main-header">
-    <h1>🌐 Advanced Translator</h1>
+    <h1>🌐 Translator</h1>
     <p>Enhanced PDF translation with smart span batching and OCR</p>
 </div>
 """, unsafe_allow_html=True)
@@ -208,7 +208,7 @@ with st.sidebar:
     st.markdown("---")
     st.header("⚙️ Options")
     
-    debug_mode = st.checkbox("Debug Mode", help="Enable detailed processing logs")
+    debug_mode = st.checkbox("Debug Mode", help="Enable detailed processing logs", value=True)
     preserve_formatting = st.checkbox("Preserve Formatting", value=True, help="Maintain document structure")
     show_metadata = st.checkbox("Show Processing Details", help="Display extraction and translation metadata")
 
