@@ -219,11 +219,12 @@ class SmartPDFProcessor:
         for block_idx, block in enumerate(blocks):
             try:
                 if "lines" in block:
-                    # Process text block with smart batching
-                    processed_block = self._process_text_block(
+                    # _process_text_block now returns a LIST of paragraph blocks
+                    paragraph_blocks = self._process_text_block(
                         block, page_num, block_idx, source_lang, target_lang, engine
                     )
-                    page_data["blocks"].append(processed_block)
+                    # Use extend to add all items from the list
+                    page_data["blocks"].extend(paragraph_blocks)
                     
                 elif "image" in block:
                     # Process image block with OCR
@@ -286,33 +287,85 @@ class SmartPDFProcessor:
         
     #     return translated_block
     
-
     def _process_text_block(self, block: Dict[str, Any], page_num: int, block_idx: int,
-                       source_lang: str, target_lang: str, engine: str) -> Dict[str, Any]:
+                        source_lang: str, target_lang: str, engine: str) -> List[Dict[str, Any]]:
         """
-        Processes a text block by first segmenting it into paragraphs, then creating
-        style-based text runs within each paragraph.
+        Processes a text block by segmenting it into paragraphs, translating each one,
+        and returning a list of simple paragraph blocks.
         """
         # 1. Segment the block's spans into paragraphs
         paragraphs = self._segment_block_into_paragraphs(block)
+        
+        final_paragraph_blocks = []
 
-        # 2. Process each paragraph to create text runs
-        all_text_runs = []
         for paragraph_spans in paragraphs:
-            runs = self._process_spans_into_runs(paragraph_spans)
-            all_text_runs.extend(runs)
+            if not paragraph_spans:
+                continue
 
-        if self.debug_mode:
-            logger.debug(f"Block {block_idx}: Found {len(paragraphs)} paragraphs, creating {len(all_text_runs)} text runs.")
+            # 2. Combine all text from the paragraph's spans
+            original_text = " ".join(span.get("text", "") for span in paragraph_spans).strip()
+            original_text = re.sub(r'\s+', ' ', original_text) # Consolidate whitespace
 
-        # 3. Translate the collected text runs
-        translated_runs = self._translate_text_runs(
-            all_text_runs, source_lang, target_lang, engine, page_num, block_idx
-        )
+            if not original_text:
+                continue
+                
+            # 3. Translate the entire paragraph in one go
+            translated_text = original_text # Default to original on failure
+            try:
+                res = translation_manager.translate_text(
+                    original_text, source_lang, target_lang, engine
+                )
+                if res.success:
+                    translated_text = res.translated_text
+            except Exception as e:
+                logger.warning(f"Paragraph translation failed: {e}")
 
-        # 4. Reconstruct the block with translated content
-        translated_block = self._reconstruct_text_block(block, translated_runs)
-        return translated_block
+            # 4. Create a single, simple block for this paragraph
+            # Calculate the bounding box that encompasses all spans in the paragraph
+            min_x = min(s['bbox'][0] for s in paragraph_spans)
+            min_y = min(s['bbox'][1] for s in paragraph_spans)
+            max_x = max(s['bbox'][2] for s in paragraph_spans)
+            max_y = max(s['bbox'][3] for s in paragraph_spans)
+            paragraph_bbox = (min_x, min_y, max_x, max_y)
+
+            # Get style from the first span as a representative style
+            first_span = paragraph_spans[0]
+            
+            final_paragraph_blocks.append({
+                "type": "text",
+                "bbox": paragraph_bbox,
+                "text": translated_text,
+                "size": first_span.get("size", 10),
+                "font": first_span.get("font", "Helvetica") # Storing font for rebuild style
+            })
+
+        return final_paragraph_blocks   
+    # def _process_text_block(self, block: Dict[str, Any], page_num: int, block_idx: int,
+    #                    source_lang: str, target_lang: str, engine: str) -> Dict[str, Any]:
+    #     """
+    #     Processes a text block by first segmenting it into paragraphs, then creating
+    #     style-based text runs within each paragraph.
+    #     """
+    #     # 1. Segment the block's spans into paragraphs
+    #     paragraphs = self._segment_block_into_paragraphs(block)
+
+    #     # 2. Process each paragraph to create text runs
+    #     all_text_runs = []
+    #     for paragraph_spans in paragraphs:
+    #         runs = self._process_spans_into_runs(paragraph_spans)
+    #         all_text_runs.extend(runs)
+
+    #     if self.debug_mode:
+    #         logger.debug(f"Block {block_idx}: Found {len(paragraphs)} paragraphs, creating {len(all_text_runs)} text runs.")
+
+    #     # 3. Translate the collected text runs
+    #     translated_runs = self._translate_text_runs(
+    #         all_text_runs, source_lang, target_lang, engine, page_num, block_idx
+    #     )
+
+    #     # 4. Reconstruct the block with translated content
+    #     translated_block = self._reconstruct_text_block(block, translated_runs)
+    #     return translated_block
 
     def _segment_block_into_paragraphs(self, block: Dict[str, Any]) -> List[List[Dict[str, Any]]]:
         """

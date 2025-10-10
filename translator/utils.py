@@ -13,7 +13,9 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from django.conf import settings
 from dataclasses import dataclass
-
+from reportlab.platypus import Paragraph
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_LEFT
 import logging
 logger = logging.getLogger(__name__)
 
@@ -170,68 +172,67 @@ def gemini_translate_chunks(chunks: List[str], source_lang: str, target_lang: st
 
 def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
     """
-    Enhanced PDF rebuilding compatible with new span-based structure.
+    Rebuilds a PDF using the simple paragraph-wrapping method.
     """
     doc = fitz.open(original_pdf_path)
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
+    page_width, page_height = A4
+    c = canvas.Canvas(buffer, pagesize=(page_width, page_height))
 
-    # Pick correct font for target_lang
     try:
+        # Get font name and filename from the FONTS setting based on target_lang
         font_name, font_file = FONTS.get(target_lang, FONTS["default"])
-    except:
-        font_name, font_file = FONTS["default"]
-
-    font_path = os.path.join(FONT_PATH, font_file)
-    try:
+        font_path = os.path.join(FONT_PATH, font_file)
         pdfmetrics.registerFont(TTFont(font_name, font_path))
-    except:
-        default_font, default_file = FONTS["default"]
-        pdfmetrics.registerFont(TTFont(default_font, os.path.join(FONT_PATH, default_file)))
-        font_name = default_font
+        logger.info(f"Successfully registered font '{font_name}' for language '{target_lang}'.")
+    except Exception as e:
+        logger.warning(f"Font registration for '{target_lang}' failed. Using fallback. Error: {e}")
+        # Use the default font as a fallback
+        font_name, font_file = FONTS["default"]
+        font_path = os.path.join(FONT_PATH, font_file)
+        try:
+            pdfmetrics.registerFont(TTFont(font_name, font_path))
+        except Exception as e2:
+            logger.error(f"Fallback font failed to register: {e2}")
+            font_name = "Helvetica" # Absolute fallback
 
-    font_size = 11
-    c.setFont(font_name, font_size)
-
-    def bbox_equal(a, b, tol=1.0):
-        """Compare two bboxes with small tolerance (points)."""
-        if not a or not b:
-            return False
-        a_t = tuple(float(x) for x in a)
-        b_t = tuple(float(x) for x in b)
-        return all(abs(a_t[i] - b_t[i]) <= tol for i in range(4))
-
-    for page_index, page in enumerate(doc):
-        if page_index >= len(translated_pages):
+    # --- Main Loop ---
+    for page_index, translated_page in enumerate(translated_pages):
+        if page_index >= len(doc):
             break
-            
-        original_blocks = page.get_text("rawdict")["blocks"]
-        translated_page = translated_pages[page_index]
+        page = doc[page_index]
+        
         translated_blocks = translated_page.get("blocks", [])
 
-        for i, original_block in enumerate(original_blocks):
-            try:
-                # Find corresponding translated block
-                translated_block = translated_blocks[i] if i < len(translated_blocks) else {}
-                
-                if "lines" in original_block:
-                    # Handle text blocks - check for new span-based structure
-                    if "lines" in translated_block and translated_block.get("type") == "text":
-                        # New format with preserved span structure
-                        render_enhanced_text_block(c, translated_block, height, font_name, font_size)
-                    elif translated_block.get("text"):
-                        # Fallback to simple text rendering
-                        render_simple_text_block(c, original_block, translated_block.get("text"), 
-                                                height, font_name, font_size)
-                
-                elif "image" in original_block:
-                    # Handle image blocks
-                    render_image_block(c, page, original_block, translated_block, height, font_name, font_size)
+        # --- FIX IS HERE: Use enumerate() to get both index and block ---
+        for block_idx, block in enumerate(translated_blocks):
+            if block.get("type") == "text" and block.get("text"):
+                try:
+                    x0, y0, x1, y1 = block["bbox"]
+                    box_width = x1 - x0
+                    box_height = y1 - y0
+                    font_size = block.get("size", 10)
+                    block_font = block.get("font", font_name)
+
+                    font_size -= 2 # Decreases the font size
+
+                    p_style = ParagraphStyle(
+                        name=f'p_style_{page_index}_{block_idx}',
+                        fontName=font_name,
+                        fontSize=font_size,
+                        leading=font_size * 1.2,
+                        alignment=TA_LEFT,
+                    )
                     
-            except Exception as e:
-                logger.error(f"Error rendering block {i} on page {page_index + 1}: {e}")
-                continue
+                    p = Paragraph(block["text"], p_style)
+                    p.wrapOn(c, box_width, box_height)
+                    p.drawOn(c, x0, page_height - y1)
+
+                except Exception as e:
+                    logger.error(f"Error rendering text block: {e}")
+
+            elif block.get("type") == "image":
+                render_image_block(c, page, block, block, page_height, font_name, 10)
 
         c.showPage()
 
@@ -240,63 +241,63 @@ def rebuild_pdf(translated_pages, original_pdf_path, target_lang="default"):
     return buffer.getvalue()
 
 
-def render_enhanced_text_block(c, translated_block, height, font_name, font_size):
-    """Render text block with preserved span structure."""
-    try:
-        for line in translated_block.get("lines", []):
-            for span in line.get("spans", []):
-                text = span.get("text", "").strip()
-                if not text:
-                    continue
+# def render_enhanced_text_block(c, translated_block, height, font_name, font_size):
+#     """Render text block with preserved span structure."""
+#     try:
+#         for line in translated_block.get("lines", []):
+#             for span in line.get("spans", []):
+#                 text = span.get("text", "").strip()
+#                 if not text:
+#                     continue
                 
-                # Get span position
-                origin = span.get("origin", [0, 0])
-                x, y = origin[0], height - origin[1]
+#                 # Get span position
+#                 origin = span.get("origin", [0, 0])
+#                 x, y = origin[0], height - origin[1]
                 
-                # Set font size from span if available
-                span_font = span.get("font", font_name)
-                span_size = span.get("size", font_size)
-                try:
-                    c.setFont(span_font, span_size)
-                except:
-                    c.setFont(font_name, font_size)
+#                 # Set font size from span if available
+#                 span_font = span.get("font", font_name)
+#                 span_size = span.get("size", font_size)
+#                 try:
+#                     c.setFont(span_font, span_size)
+#                 except:
+#                     c.setFont(font_name, font_size)
                 
-                # Draw text at original position
-                c.drawString(x, y, text)
+#                 # Draw text at original position
+#                 c.drawString(x, y, text)
                 
-    except Exception as e:
-        logger.error(f"Enhanced text block rendering failed: {e}")
+#     except Exception as e:
+#         logger.error(f"Enhanced text block rendering failed: {e}")
 
-def render_simple_text_block(c, original_block, translated_text, height, font_name, font_size):
-    """Fallback simple text block rendering."""
-    try:
-        x0, y0, x1, y1 = original_block["bbox"]
-        w, h = (x1 - x0), (y1 - y0)
-        y_top = height - y1
+# def render_simple_text_block(c, original_block, translated_text, height, font_name, font_size):
+#     """Fallback simple text block rendering."""
+#     try:
+#         x0, y0, x1, y1 = original_block["bbox"]
+#         w, h = (x1 - x0), (y1 - y0)
+#         y_top = height - y1
 
-        text_obj = c.beginText(x0, y_top + h - font_size)
-        text_obj.setFont(font_name, font_size)
-        text_obj.setLeading(font_size + 2)
+#         text_obj = c.beginText(x0, y_top + h - font_size)
+#         text_obj.setFont(font_name, font_size)
+#         text_obj.setLeading(font_size + 2)
 
-        max_width = w
-        for line in translated_text.split("\n"):
-            words = line.split(" ")
-            current_line = ""
-            for word in words:
-                trial_line = (current_line + " " + word).strip()
-                if stringWidth(trial_line, font_name, font_size) <= max_width:
-                    current_line = trial_line
-                else:
-                    if current_line:
-                        text_obj.textLine(current_line)
-                    current_line = word
-            if current_line:
-                text_obj.textLine(current_line)
+#         max_width = w
+#         for line in translated_text.split("\n"):
+#             words = line.split(" ")
+#             current_line = ""
+#             for word in words:
+#                 trial_line = (current_line + " " + word).strip()
+#                 if stringWidth(trial_line, font_name, font_size) <= max_width:
+#                     current_line = trial_line
+#                 else:
+#                     if current_line:
+#                         text_obj.textLine(current_line)
+#                     current_line = word
+#             if current_line:
+#                 text_obj.textLine(current_line)
         
-        c.drawText(text_obj)
+#         c.drawText(text_obj)
         
-    except Exception as e:
-        logger.error(f"Simple text block rendering failed: {e}")
+#     except Exception as e:
+#         logger.error(f"Simple text block rendering failed: {e}")
 
 def render_image_block(c, page, original_block, translated_block, height, font_name, font_size):
     """Render image blocks with OCR text if available."""

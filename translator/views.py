@@ -83,58 +83,9 @@ def translate_view(request):
                     if not translated_pages:
                         messages.error(request, "No content could be extracted from the PDF.")
                         return render(request, 'translator/translate.html', {'form': form})
-
-                    # Save enhanced blocks into session (with span structure preserved)
-                    safe_pages = []
-                    for page in translated_pages:
-                        safe_blocks = []
-                        for block in page.get("blocks", []):
-                            if block["type"] == "text":
-                                # Keep the enhanced span structure if available
-                                if "lines" in block:
-                                    # New enhanced format with spans
-                                    clean_block = {
-                                        "type": "text",
-                                        "bbox": tuple(block.get("bbox", ())),
-                                        "text": block.get("text", ""),
-                                        "lines": block.get("lines", [])  # Preserve span structure
-                                    }
-                                else:
-                                    # Fallback to simple format
-                                    clean_block = {
-                                        "type": "text",
-                                        "bbox": tuple(block.get("bbox", ())),
-                                        "text": block.get("text", "")
-                                    }
-                                safe_blocks.append(clean_block)
-                                
-                            elif block["type"] == "image":
-                                # Enhanced image block with OCR data
-                                image_block = {
-                                    "type": "image",
-                                    "bbox": tuple(block.get("bbox", ())),
-                                }
-                                
-                                # Include OCR text if available
-                                if block.get("image_text"):
-                                    image_block["image_text"] = block["image_text"]
-                                if block.get("original_ocr"):
-                                    image_block["original_ocr"] = block["original_ocr"]
-                                if block.get("translated_ocr"):
-                                    image_block["translated_ocr"] = block["translated_ocr"]
-                                
-                                safe_blocks.append(image_block)
-                                
-                            else:
-                                # Other block types
-                                safe_blocks.append({
-                                    "type": block.get("type", "other"),
-                                    "bbox": tuple(block.get("bbox", ()))
-                                })
-                        
-                        safe_pages.append({"blocks": safe_blocks})
-
-                    request.session["translated_pages"] = safe_pages
+                    
+                    # Directly save the simplified output to the session. No loop needed.
+                    request.session["translated_pages"] = translated_pages
                     
                     # Store translation metadata
                     request.session["translation_metadata"] = {
